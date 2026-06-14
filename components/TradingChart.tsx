@@ -11,7 +11,7 @@ interface Props {
 
 type LWC = typeof import('lightweight-charts')
 type IChart = import('lightweight-charts').IChartApi
-type Time = import('lightweight-charts').Time
+type Time   = import('lightweight-charts').Time
 type SeriesAny = import('lightweight-charts').ISeriesApi<import('lightweight-charts').SeriesType>
 
 interface ChartState {
@@ -20,15 +20,20 @@ interface ChartState {
   tsiChart: IChart
   ro: ResizeObserver
   disposed: boolean
-  // 現在アクティブなシリーズを追跡
-  series: { chart: IChart; s: SeriesAny }[]
+  // 現在アクティブなシリーズ参照（差し替え用）
+  activeSeries: { chart: IChart; s: SeriesAny }[]
+  // クロスヘア参照用（最新のシリーズをここに保持）
+  crossRef: {
+    tsiSeries: SeriesAny | null
+    candleSeries: SeriesAny | null
+  }
 }
 
 export default function TradingChart({ bars, ticker }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const stateRef = useRef<ChartState | null>(null)
 
-  // ── 初期化：マウント時1回 ──
+  // ── チャート初期化：マウント時1回だけ ──
   useEffect(() => {
     if (!containerRef.current) return
     let cancelled = false
@@ -61,37 +66,75 @@ export default function TradingChart({ bars, ticker }: Props) {
           horzLine: { color: '#8b949e', width: 1 as 1, style: LineStyle.Dashed },
         },
         rightPriceScale: { borderColor: '#30363d' },
+        // 下チャートの時間軸は非表示（上と共有する）
         timeScale: { borderColor: '#30363d', timeVisible: true },
       }
 
       const priceChart = createChart(priceWrapper, { ...baseOpts, height: priceH })
-      const tsiChart   = createChart(tsiWrapper,   { ...baseOpts, height: tsiH })
+      const tsiChart   = createChart(tsiWrapper, {
+        ...baseOpts,
+        height: tsiH,
+        timeScale: { ...baseOpts.timeScale, visible: false }, // 下チャートの軸を非表示
+      })
 
-      // 時系列同期
+      const crossRef: ChartState['crossRef'] = { tsiSeries: null, candleSeries: null }
+
+      // ── 横スケール同期：初期化時1回だけ購読 ──
       let lockP = false, lockT = false
       priceChart.timeScale().subscribeVisibleLogicalRangeChange(r => {
-        if (lockT || !r) return; lockP = true
+        if (lockT || !r) return
+        lockP = true
         try { tsiChart.timeScale().setVisibleLogicalRange(r) } catch { /**/ }
         lockP = false
       })
       tsiChart.timeScale().subscribeVisibleLogicalRangeChange(r => {
-        if (lockP || !r) return; lockT = true
+        if (lockP || !r) return
+        lockT = true
         try { priceChart.timeScale().setVisibleLogicalRange(r) } catch { /**/ }
         lockT = false
       })
 
-      // Resize
+      // ── クロスヘア同期：初期化時1回だけ購読（crossRefで最新シリーズを参照）──
+      priceChart.subscribeCrosshairMove(p => {
+        const st = stateRef.current
+        if (!st || st.disposed || !crossRef.tsiSeries) return
+        try {
+          if (p.time) tsiChart.setCrosshairPosition(0, p.time as Time, crossRef.tsiSeries)
+          else tsiChart.clearCrosshairPosition()
+        } catch { /**/ }
+      })
+      tsiChart.subscribeCrosshairMove(p => {
+        const st = stateRef.current
+        if (!st || st.disposed || !crossRef.candleSeries) return
+        try {
+          if (p.time) priceChart.setCrosshairPosition(0, p.time as Time, crossRef.candleSeries)
+          else priceChart.clearCrosshairPosition()
+        } catch { /**/ }
+      })
+
+      // ── Resize observer ──
       const ro = new ResizeObserver(() => {
         const st = stateRef.current
         if (!st || st.disposed) return
-        const h = container.clientHeight
-        const ph = Math.floor(h * 0.62); const th = h - ph - 4
-        priceWrapper.style.height = `${ph}px`; tsiWrapper.style.height = `${th}px`
-        try { priceChart.applyOptions({ height: ph }); tsiChart.applyOptions({ height: th }) } catch { /**/ }
+        const h  = container.clientHeight
+        const ph = Math.floor(h * 0.62)
+        const th = h - ph - 4
+        priceWrapper.style.height = `${ph}px`
+        tsiWrapper.style.height   = `${th}px`
+        try {
+          priceChart.applyOptions({ height: ph })
+          tsiChart.applyOptions({ height: th })
+        } catch { /**/ }
       })
       ro.observe(container)
 
-      stateRef.current = { lwc, priceChart, tsiChart, ro, disposed: false, series: [] }
+      stateRef.current = {
+        lwc, priceChart, tsiChart, ro,
+        disposed: false,
+        activeSeries: [],
+        crossRef,
+      }
+
       drawSeries(stateRef.current, bars, ticker)
     }
 
@@ -103,7 +146,7 @@ export default function TradingChart({ bars, ticker }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── レンジ変更等でbarsが変わった時 ──
+  // ── データ更新：bars / ticker 変化時 ──
   useEffect(() => {
     const st = stateRef.current
     if (!st || st.disposed) return
@@ -115,7 +158,7 @@ export default function TradingChart({ bars, ticker }: Props) {
     if (!st || st.disposed) return
     st.disposed = true
     st.ro.disconnect()
-    st.series = []
+    st.activeSeries = []
     try { st.priceChart.remove() } catch { /**/ }
     try { st.tsiChart.remove() }   catch { /**/ }
     stateRef.current = null
@@ -124,22 +167,21 @@ export default function TradingChart({ bars, ticker }: Props) {
   return <div ref={containerRef} style={{ width: '100%', height: 'calc(100vh - 52px)' }} />
 }
 
-// ── 描画：シリーズを参照リストで管理して安全に差し替え ──
+// ── シリーズ差し替え＋描画（クロスヘア・時間軸の購読は触らない）──
 function drawSeries(st: ChartState, bars: PriceBar[], ticker: string) {
   if (st.disposed || bars.length === 0) return
 
-  const { lwc, priceChart, tsiChart } = st
+  const { lwc, priceChart, tsiChart, crossRef } = st
   const { CandlestickSeries, LineSeries, LineStyle, createSeriesMarkers } = lwc
 
-  // 前回のシリーズを安全に削除
-  for (const { chart, s } of st.series) {
-    try { chart.removeSeries(s) } catch { /* already disposed – ignore */ }
+  // 前回シリーズを安全に削除
+  for (const { chart, s } of st.activeSeries) {
+    try { chart.removeSeries(s) } catch { /**/ }
   }
-  st.series = []
-
+  st.activeSeries = []
   if (st.disposed) return
 
-  // シリーズ再作成（参照を記録）
+  // シリーズ再作成
   const candleSeries = priceChart.addSeries(CandlestickSeries, {
     upColor: '#3fb950', downColor: '#f85149',
     borderUpColor: '#3fb950', borderDownColor: '#f85149',
@@ -149,30 +191,18 @@ function drawSeries(st: ChartState, bars: PriceBar[], ticker: string) {
   const sigSeries  = tsiChart.addSeries(LineSeries, { color: '#d29922', lineWidth: 1 as 1, lineStyle: LineStyle.Dashed, title: 'Sig' })
   const zeroSeries = tsiChart.addSeries(LineSeries, { color: '#484f58', lineWidth: 1 as 1, lineStyle: LineStyle.Dotted, title: '-10' })
 
-  st.series = [
+  st.activeSeries = [
     { chart: priceChart, s: candleSeries as SeriesAny },
     { chart: tsiChart,   s: tsiSeries   as SeriesAny },
     { chart: tsiChart,   s: sigSeries   as SeriesAny },
     { chart: tsiChart,   s: zeroSeries  as SeriesAny },
   ]
 
-  // クロスヘア同期（シリーズ差し替え後に再設定）
-  priceChart.subscribeCrosshairMove(p => {
-    if (st.disposed) return
-    try {
-      if (p.time) tsiChart.setCrosshairPosition(0, p.time as Time, tsiSeries)
-      else tsiChart.clearCrosshairPosition()
-    } catch { /**/ }
-  })
-  tsiChart.subscribeCrosshairMove(p => {
-    if (st.disposed) return
-    try {
-      if (p.time) priceChart.setCrosshairPosition(0, p.time as Time, candleSeries)
-      else priceChart.clearCrosshairPosition()
-    } catch { /**/ }
-  })
+  // クロスヘア用の最新シリーズ参照を更新
+  crossRef.candleSeries = candleSeries as SeriesAny
+  crossRef.tsiSeries    = tsiSeries    as SeriesAny
 
-  // データセット
+  // ── データセット ──
   candleSeries.setData(bars.map(b => ({
     time: b.date as Time, open: b.open, high: b.high, low: b.low, close: b.close,
   })))
@@ -185,7 +215,7 @@ function drawSeries(st: ChartState, bars: PriceBar[], ticker: string) {
 
   if (tsiPoints.length > 0) {
     zeroSeries.setData([
-      { time: tsiPoints[0].date as Time, value: -10 },
+      { time: tsiPoints[0].date as Time,                    value: -10 },
       { time: tsiPoints[tsiPoints.length - 1].date as Time, value: -10 },
     ])
   }
@@ -204,6 +234,7 @@ function drawSeries(st: ChartState, bars: PriceBar[], ticker: string) {
     })))
   }
 
+  // 全データをフィット表示
   priceChart.timeScale().fitContent()
 
   // 通知
@@ -220,4 +251,3 @@ function drawSeries(st: ChartState, bars: PriceBar[], ticker: string) {
     }
   }
 }
-

@@ -2,50 +2,47 @@
 import { useEffect, useState, use } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
-import type { PriceBar, PriceRange } from '@/types'
+import type { PriceBar } from '@/types'
 import TradingChart from '@/components/TradingChart'
 
 interface Props {
   params: Promise<{ id: string }>
 }
 
-const RANGES: PriceRange[] = ['1W', '1M', '3M', '6M', '1Y', 'ALL']
-
-function filterByRange(bars: PriceBar[], range: PriceRange): PriceBar[] {
-  if (range === 'ALL') return bars
-  const now = new Date()
-  const cutoff = new Date(now)
-  if (range === '1W') cutoff.setDate(now.getDate() - 7)
-  else if (range === '1M') cutoff.setMonth(now.getMonth() - 1)
-  else if (range === '3M') cutoff.setMonth(now.getMonth() - 3)
-  else if (range === '6M') cutoff.setMonth(now.getMonth() - 6)
-  else if (range === '1Y') cutoff.setFullYear(now.getFullYear() - 1)
-  const cutoffStr = cutoff.toISOString().split('T')[0]
-  return bars.filter(b => b.date >= cutoffStr)
-}
+type Interval = '1d' | '1wk' | '1mo'
+const INTERVALS: { value: Interval; label: string }[] = [
+  { value: '1d',  label: '日足' },
+  { value: '1wk', label: '週足' },
+  { value: '1mo', label: '月足' },
+]
 
 export default function ChartPage({ params }: Props) {
   const { id } = use(params)
   const router = useRouter()
   const searchParams = useSearchParams()
   const ticker = searchParams.get('ticker') ?? ''
-  const name = searchParams.get('name') ?? ticker
+  const name   = searchParams.get('name')   ?? ticker
 
-  const [allBars, setAllBars] = useState<PriceBar[]>([])
-  const [range, setRange] = useState<PriceRange>('3M')
-  const [loading, setLoading] = useState(true)
+  const [bars, setBars]           = useState<PriceBar[]>([])
+  const [interval, setInterval]   = useState<Interval>('1d')
+  const [loading, setLoading]     = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
-  useEffect(() => { loadCached() }, [id])
+  // 初回：DBキャッシュから日足を取得
+  useEffect(() => { loadBars('1d') }, [id])
 
-  async function loadCached() {
+  // 足種切替：キャッシュ済みデータをサーバーで集計して返す
+  useEffect(() => {
+    if (!bars.length) return   // 初回ロード前はスキップ
+    loadBars(interval)
+  }, [interval])
+
+  async function loadBars(iv: Interval) {
     setLoading(true)
     try {
-      const res = await fetch(`/api/prices?symbol_id=${id}`)
+      const res  = await fetch(`/api/prices?symbol_id=${id}&interval=${iv}`)
       const data = await res.json()
-      if (data.bars?.length) {
-        setAllBars(data.bars)
-      }
+      if (data.bars?.length) setBars(data.bars)
     } finally {
       setLoading(false)
     }
@@ -54,19 +51,24 @@ export default function ChartPage({ params }: Props) {
   async function handleRefresh() {
     setRefreshing(true)
     try {
-      const res = await fetch('/api/prices', {
+      // Yahoo から最新日足をDB更新
+      const res  = await fetch('/api/prices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol_id: id, ticker }),
       })
       const data = await res.json()
-      if (data.bars?.length) setAllBars(data.bars)
+      if (data.error) { console.error(data.error); return }
+      // 更新後に現在の足種で再取得
+      await loadBars(interval)
     } finally {
       setRefreshing(false)
     }
   }
 
-  const displayBars = filterByRange(allBars, range)
+  function handleIntervalChange(iv: Interval) {
+    setInterval(iv)
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' }}>
@@ -95,28 +97,33 @@ export default function ChartPage({ params }: Props) {
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{ticker}</div>
           </div>
         </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Range buttons */}
+          {/* 足種切替 */}
           <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
-            {RANGES.map(r => (
+            {INTERVALS.map(({ value, label }) => (
               <button
-                key={r}
-                onClick={() => setRange(r)}
+                key={value}
+                onClick={() => handleIntervalChange(value)}
                 style={{
-                  background: range === r ? 'var(--accent-blue)' : 'none',
+                  background: interval === value ? 'var(--accent-blue)' : 'none',
                   border: 'none',
                   borderRadius: 4,
-                  padding: '4px 8px',
-                  color: range === r ? '#fff' : 'var(--text-secondary)',
+                  padding: '4px 10px',
+                  color: interval === value ? '#fff' : 'var(--text-secondary)',
                   cursor: 'pointer',
                   fontSize: 12,
-                  fontWeight: range === r ? 600 : 400,
+                  fontWeight: interval === value ? 600 : 400,
+                  minWidth: 42,
+                  transition: 'background 0.12s',
                 }}
               >
-                {r}
+                {label}
               </button>
             ))}
           </div>
+
+          {/* データ更新ボタン */}
           <button
             onClick={handleRefresh}
             disabled={refreshing}
@@ -140,30 +147,23 @@ export default function ChartPage({ params }: Props) {
       </header>
 
       {/* Chart area */}
-      <div style={{ flex: 1, padding: '0', overflow: 'hidden' }}>
+      <div style={{ flex: 1, overflow: 'hidden' }}>
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-muted)' }}>
             読み込み中...
           </div>
-        ) : displayBars.length === 0 ? (
+        ) : bars.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-muted)', gap: 12 }}>
             <p>価格データがありません</p>
             <button
               onClick={handleRefresh}
-              style={{
-                background: 'var(--accent-blue)', border: 'none', borderRadius: 6,
-                padding: '8px 20px', color: '#fff', cursor: 'pointer', fontSize: 13,
-              }}
+              style={{ background: 'var(--accent-blue)', border: 'none', borderRadius: 6, padding: '8px 20px', color: '#fff', cursor: 'pointer', fontSize: 13 }}
             >
               Yahoo Finance から取得する
             </button>
           </div>
         ) : (
-          <TradingChart
-            bars={displayBars}
-            symbolId={id}
-            ticker={ticker}
-          />
+          <TradingChart bars={bars} symbolId={id} ticker={ticker} />
         )}
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

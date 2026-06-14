@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 import { fetchBarsWithFx } from '@/lib/yahoo'
 
+// GET /api/prices?symbol_id=xxx&interval=1d|1wk|1mo
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const symbolId = searchParams.get('symbol_id')
+    const interval = searchParams.get('interval') ?? '1d'
+
     if (!symbolId) return NextResponse.json({ error: 'symbol_id required' }, { status: 400 })
 
+    // 週足・月足はDBキャッシュ（日足）から集計して返す
     const db = createServiceClient()
     const { data, error } = await db
       .from('price_cache')
@@ -16,7 +20,17 @@ export async function GET(req: NextRequest) {
       .order('date', { ascending: true })
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ bars: data })
+
+    const bars = data ?? []
+
+    if (interval === '1d') {
+      return NextResponse.json({ bars })
+    }
+
+    // 週足・月足：日足データを集計
+    const aggregated = aggregateBars(bars, interval as '1wk' | '1mo')
+    return NextResponse.json({ bars: aggregated })
+
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[GET /api/prices]', msg)
@@ -24,6 +38,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// POST /api/prices  → Yahoo から日足を取得してDBへupsert
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -33,8 +48,8 @@ export async function POST(req: NextRequest) {
     }
 
     const { bars, fxRate } = await fetchBarsWithFx(ticker)
-
     const db = createServiceClient()
+
     const rows = bars.map(b => ({
       symbol_id,
       date: b.date,
@@ -52,9 +67,50 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ bars, count: bars.length })
+
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[POST /api/prices]', msg)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
+}
+
+// 日足 → 週足 / 月足 に集計
+function aggregateBars(
+  bars: { date: string; open: number; high: number; low: number; close: number; volume: number }[],
+  interval: '1wk' | '1mo'
+) {
+  if (bars.length === 0) return []
+
+  const getKey = (date: string) => {
+    const d = new Date(date)
+    if (interval === '1wk') {
+      // 週の月曜日をキーにする
+      const day = d.getDay()
+      const diff = (day === 0 ? -6 : 1 - day)
+      d.setDate(d.getDate() + diff)
+    } else {
+      // 月初をキーにする
+      d.setDate(1)
+    }
+    return d.toISOString().split('T')[0]
+  }
+
+  const buckets = new Map<string, typeof bars>()
+  for (const bar of bars) {
+    const key = getKey(bar.date)
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key)!.push(bar)
+  }
+
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, group]) => ({
+      date,
+      open:   group[0].open,
+      high:   Math.max(...group.map(b => b.high)),
+      low:    Math.min(...group.map(b => b.low)),
+      close:  group[group.length - 1].close,
+      volume: group.reduce((s, b) => s + b.volume, 0),
+    }))
 }
