@@ -4,6 +4,7 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { PriceBar } from '@/types'
 import TradingChart from '@/components/TradingChart'
+import TsiParamBar, { type TsiParams } from '@/components/TsiParamBar'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -16,32 +17,27 @@ const INTERVALS: { value: Interval; label: string }[] = [
   { value: '1mo', label: '月足' },
 ]
 
+const DEFAULT_TSI: TsiParams = { long: 12, short: 6, signal: 3 }
+
 export default function ChartPage({ params }: Props) {
   const resolvedParams = use(params)
   const router       = useRouter()
   const pathname     = usePathname()
   const searchParams = useSearchParams()
 
-  // pathnameから確実にIDを取得（/chart/<uuid>）
   const symbolId = pathname.split('/').pop() ?? resolvedParams.id
-
-  const ticker = searchParams.get('ticker') ?? ''
-  const name   = searchParams.get('name')   ?? ticker
+  const ticker   = searchParams.get('ticker') ?? ''
+  const name     = searchParams.get('name')   ?? ticker
 
   const [bars, setBars]             = useState<PriceBar[]>([])
   const [interval, setInterval]     = useState<Interval>('1d')
+  const [tsiParams, setTsiParams]   = useState<TsiParams>(DEFAULT_TSI)
   const [loading, setLoading]       = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]           = useState('')
 
-  useEffect(() => {
-    if (symbolId) loadBars('1d')
-  }, [symbolId])
-
-  useEffect(() => {
-    if (!bars.length) return
-    loadBars(interval)
-  }, [interval])
+  useEffect(() => { if (symbolId) loadBars('1d') }, [symbolId])
+  useEffect(() => { if (bars.length) loadBars(interval) }, [interval])
 
   async function loadBars(iv: Interval) {
     setLoading(true)
@@ -79,6 +75,7 @@ export default function ChartPage({ params }: Props) {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' }}>
+      {/* ── ヘッダー ── */}
       <header style={{
         background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
         padding: '0 16px', height: 52, display: 'flex', alignItems: 'center',
@@ -96,6 +93,7 @@ export default function ChartPage({ params }: Props) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* 足種切替 */}
           <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
             {INTERVALS.map(({ value, label }) => (
               <button key={value} onClick={() => setInterval(value)}
@@ -103,7 +101,8 @@ export default function ChartPage({ params }: Props) {
                   background: interval === value ? 'var(--accent-blue)' : 'none',
                   border: 'none', borderRadius: 4, padding: '4px 10px',
                   color: interval === value ? '#fff' : 'var(--text-secondary)',
-                  cursor: 'pointer', fontSize: 12, fontWeight: interval === value ? 600 : 400,
+                  cursor: 'pointer', fontSize: 12,
+                  fontWeight: interval === value ? 600 : 400,
                   minWidth: 42, transition: 'background 0.12s',
                 }}>
                 {label}
@@ -124,9 +123,13 @@ export default function ChartPage({ params }: Props) {
         </div>
       </header>
 
+      {/* ── TSIパラメータバー ── */}
+      <TsiParamBar params={tsiParams} onChange={setTsiParams} />
+
+      {/* ── チャートエリア ── */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {error && (
-          <div style={{ padding: '12px 16px', background: 'rgba(248,81,73,0.1)', color: 'var(--accent-red)', fontSize: 13 }}>
+          <div style={{ padding: '10px 16px', background: 'rgba(248,81,73,0.1)', color: 'var(--accent-red)', fontSize: 13 }}>
             エラー: {error}
           </div>
         )}
@@ -143,7 +146,12 @@ export default function ChartPage({ params }: Props) {
             </button>
           </div>
         ) : (
-          <TradingChart bars={bars} symbolId={symbolId} ticker={ticker} />
+          <TradingChart
+            bars={bars}
+            symbolId={symbolId}
+            ticker={ticker}
+            tsiParams={tsiParams}
+          />
         )}
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
