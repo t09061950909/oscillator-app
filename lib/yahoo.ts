@@ -12,18 +12,21 @@ export function parseTicker(ticker: string): { base: string; fx: string | null }
 }
 
 /**
- * Yahoo Finance v8 から単一 range でバーを取得する内部関数
+ * Yahoo Finance v8 から期間指定（period1/period2）でバーを取得する内部関数
+ * range パラメータはYahoo側キャッシュに依存して古いデータが欠落するため、
+ * UNIX秒の絶対日付指定を使う。
  * query1 → query2 の順にフォールバック
  */
 async function fetchYahooBarsRaw(
   ticker: string,
-  range: string,
+  period1: number,  // UNIX秒（開始）
+  period2: number,  // UNIX秒（終了）
   interval = '1d'
 ): Promise<PriceBar[]> {
   const encoded = encodeURIComponent(ticker)
   const urls = [
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?range=${range}&interval=${interval}&includePrePost=false`,
-    `https://query2.finance.yahoo.com/v8/finance/chart/${encoded}?range=${range}&interval=${interval}&includePrePost=false`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?period1=${period1}&period2=${period2}&interval=${interval}&includePrePost=false`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${encoded}?period1=${period1}&period2=${period2}&interval=${interval}&includePrePost=false`,
   ]
 
   let lastError: Error | null = null
@@ -39,7 +42,7 @@ async function fetchYahooBarsRaw(
       })
 
       if (!res.ok) {
-        lastError = new Error(`HTTP ${res.status} for ${ticker} (${range})`)
+        lastError = new Error(`HTTP ${res.status} for ${ticker}`)
         console.error('[yahoo]', lastError.message)
         continue
       }
@@ -48,7 +51,7 @@ async function fetchYahooBarsRaw(
       const result = json?.chart?.result?.[0]
       if (!result) {
         const desc = json?.chart?.error?.description ?? 'No data'
-        lastError  = new Error(`${desc} for ${ticker} (${range})`)
+        lastError  = new Error(`${desc} for ${ticker}`)
         console.error('[yahoo]', lastError.message)
         continue
       }
@@ -56,7 +59,7 @@ async function fetchYahooBarsRaw(
       const timestamps: number[] = result.timestamp ?? []
       const ohlcv = result.indicators?.quote?.[0]
       if (!ohlcv || timestamps.length === 0) {
-        lastError = new Error(`Empty OHLCV for ${ticker} (${range})`)
+        lastError = new Error(`Empty OHLCV for ${ticker}`)
         continue
       }
 
@@ -69,7 +72,9 @@ async function fetchYahooBarsRaw(
         bars.push({ date, open: o, high: h, low: l, close: c, volume: ohlcv.volume?.[i] ?? 0 })
       }
 
-      console.log(`[yahoo] fetched ${bars.length} bars for ${ticker} (range=${range})`)
+      const firstDate = bars[0]?.date
+      const lastDate  = bars[bars.length - 1]?.date
+      console.log(`[yahoo] fetched ${bars.length} bars for ${ticker} (${firstDate} → ${lastDate})`)
       return bars
 
     } catch (e) {
@@ -78,39 +83,55 @@ async function fetchYahooBarsRaw(
     }
   }
 
-  throw lastError ?? new Error(`Failed to fetch ${ticker} (${range})`)
+  throw lastError ?? new Error(`Failed to fetch ${ticker}`)
 }
 
 /**
- * 分割取得でマージする
- * 1) 10y（古いデータ）→ 2) 2y（直近・高精度）の順に取得し、
- * 日付キーで後者優先でマージ → 日付昇順ソートして返す
+ * 分割取得でマージする（period1/period2 絶対日付指定）
  *
- * ・10y が失敗しても 2y だけで続行（警告のみ）
- * ・重複日は 2y 側（新しいリクエスト）の値で上書き
+ * Yahoo Finance の range パラメータはサーバー側キャッシュに依存し、
+ * 古い期間が欠落するケースがある。絶対 UNIX 秒で期間を指定することで
+ * 確実に全期間を取得する。
+ *
+ * チャンク分割の理由：1リクエストあたりの上限が非公式で不明なため、
+ * 5年ずつに分割して安全に取得する。
+ *
+ * ・各チャンクが失敗しても続行（警告のみ）
+ * ・重複日は後のチャンク（新しい期間）で上書き → 直近ほど精度が高い
  */
 export async function fetchYahooBars(
   ticker: string,
   interval = '1d'
 ): Promise<PriceBar[]> {
   const map = new Map<string, PriceBar>()
+  const now = Math.floor(Date.now() / 1000)
 
-  // ── 1st chunk: 10年分（古い方から埋める） ──
-  try {
-    const old = await fetchYahooBarsRaw(ticker, '10y', interval)
-    for (const b of old) map.set(b.date, b)
-  } catch (e) {
-    console.warn('[yahoo] 10y fetch failed, falling back to 2y only:', e)
+  // 5年ずつ4チャンクで最大20年分を取得
+  // 例: 2004〜2009, 2009〜2014, 2014〜2019, 2019〜now
+  const YEARS_PER_CHUNK = 5
+  const TOTAL_YEARS     = 20
+  const SEC_PER_YEAR    = 365.25 * 24 * 3600
+
+  const chunks: Array<{ p1: number; p2: number }> = []
+  for (let i = TOTAL_YEARS; i > 0; i -= YEARS_PER_CHUNK) {
+    const p1 = Math.floor(now - i * SEC_PER_YEAR)
+    const p2 = Math.floor(now - (i - YEARS_PER_CHUNK) * SEC_PER_YEAR)
+    chunks.push({ p1, p2: Math.min(p2, now) })
   }
 
-  // ── 2nd chunk: 2年分（直近を正確な値で上書き） ──
-  const recent = await fetchYahooBarsRaw(ticker, '2y', interval)
-  for (const b of recent) map.set(b.date, b)
+  for (const { p1, p2 } of chunks) {
+    try {
+      const bars = await fetchYahooBarsRaw(ticker, p1, p2, interval)
+      for (const b of bars) map.set(b.date, b)
+    } catch (e) {
+      console.warn(`[yahoo] chunk failed for ${ticker} (${new Date(p1*1000).toISOString().slice(0,10)} → ${new Date(p2*1000).toISOString().slice(0,10)}):`, e)
+    }
+  }
 
   if (map.size === 0) throw new Error(`No bars fetched for ${ticker}`)
 
   const merged = [...map.values()].sort((a, b) => a.date.localeCompare(b.date))
-  console.log(`[yahoo] merged total ${merged.length} bars for ${ticker}`)
+  console.log(`[yahoo] merged total ${merged.length} bars for ${ticker} (${merged[0].date} → ${merged[merged.length-1].date})`)
   return merged
 }
 
