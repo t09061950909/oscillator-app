@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
       .select('*')
       .eq('symbol_id', symbolId)
       .order('date', { ascending: true })
+      .limit(100000)  // Supabase デフォルト上限1000件を回避
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
