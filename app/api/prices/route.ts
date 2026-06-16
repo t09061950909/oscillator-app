@@ -11,20 +11,25 @@ export async function GET(req: NextRequest) {
     if (!symbolId) return NextResponse.json({ error: 'symbol_id required' }, { status: 400 })
 
     const db = createServiceClient()
-    const { data, error } = await db
+
+    // Supabase はデフォルト1000件上限。
+    // .range(0, 99999) で明示的に全件取得する
+    const { data, error, count } = await db
       .from('price_cache')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('symbol_id', symbolId)
       .order('date', { ascending: true })
-      .limit(100000)  // Supabase デフォルト上限1000件を回避
+      .range(0, 99999)
+
+    console.log(`[GET /api/prices] symbol_id=${symbolId} interval=${interval} db_total=${count} returned=${data?.length}`)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     const bars = data ?? []
-    if (interval === '1d') return NextResponse.json({ bars })
+    if (interval === '1d') return NextResponse.json({ bars, _debug: { db_total: count, returned: bars.length } })
 
     const aggregated = aggregateBars(bars, interval as '1wk' | '1mo')
-    return NextResponse.json({ bars: aggregated })
+    return NextResponse.json({ bars: aggregated, _debug: { db_total: count, returned: bars.length } })
 
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -71,12 +76,9 @@ type DayBar = { date: string; open: number; high: number; low: number; close: nu
 function aggregateBars(bars: DayBar[], interval: '1wk' | '1mo') {
   if (bars.length === 0) return []
 
-  // バケットキー：実際の取引日ベースで週/月の最初の日を使う
-  // （月曜固定にすると祝日・市場休場でギャップが生じるため）
   const getKey = (date: string) => {
     const d = new Date(date + 'T00:00:00Z')
     if (interval === '1wk') {
-      // ISO週番号ベースのキー：YYYY-Www
       const thu = new Date(d)
       thu.setUTCDate(d.getUTCDate() + (4 - (d.getUTCDay() || 7)))
       const year = thu.getUTCFullYear()
@@ -85,12 +87,10 @@ function aggregateBars(bars: DayBar[], interval: '1wk' | '1mo') {
       )
       return `${year}-W${String(week).padStart(2, '0')}`
     } else {
-      // YYYY-MM
       return date.substring(0, 7)
     }
   }
 
-  // バケットに分類（キー → 日足配列）
   const buckets = new Map<string, DayBar[]>()
   for (const bar of bars) {
     const key = getKey(bar.date)
@@ -98,11 +98,10 @@ function aggregateBars(bars: DayBar[], interval: '1wk' | '1mo') {
     buckets.get(key)!.push(bar)
   }
 
-  // 各バケットの最初の実取引日をdateとして使う（ギャップ防止）
   return Array.from(buckets.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, group]) => ({
-      date:   group[0].date,                               // ← 実際の最初の取引日
+      date:   group[0].date,
       open:   group[0].open,
       high:   Math.max(...group.map(b => b.high)),
       low:    Math.min(...group.map(b => b.low)),
