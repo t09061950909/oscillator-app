@@ -36,7 +36,7 @@ export interface TSIPoint {
 
 export type CrossSignal = {
   date: string
-  type: 'golden_below' | 'golden_above'  // below=-10, above=-10
+  type: 'golden_below' | 'golden_above' | 'dead_below' | 'dead_above'
   price: number
 }
 

@@ -11,9 +11,13 @@ export function parseTicker(ticker: string): { base: string; fx: string | null }
   return { base: ticker, fx: null }
 }
 
-export async function fetchYahooBars(
+/**
+ * Yahoo Finance v8 から単一 range でバーを取得する内部関数
+ * query1 → query2 の順にフォールバック
+ */
+async function fetchYahooBarsRaw(
   ticker: string,
-  range  = '2y',
+  range: string,
   interval = '1d'
 ): Promise<PriceBar[]> {
   const encoded = encodeURIComponent(ticker)
@@ -35,7 +39,7 @@ export async function fetchYahooBars(
       })
 
       if (!res.ok) {
-        lastError = new Error(`HTTP ${res.status} for ${ticker}`)
+        lastError = new Error(`HTTP ${res.status} for ${ticker} (${range})`)
         console.error('[yahoo]', lastError.message)
         continue
       }
@@ -44,7 +48,7 @@ export async function fetchYahooBars(
       const result = json?.chart?.result?.[0]
       if (!result) {
         const desc = json?.chart?.error?.description ?? 'No data'
-        lastError  = new Error(`${desc} for ${ticker}`)
+        lastError  = new Error(`${desc} for ${ticker} (${range})`)
         console.error('[yahoo]', lastError.message)
         continue
       }
@@ -52,20 +56,20 @@ export async function fetchYahooBars(
       const timestamps: number[] = result.timestamp ?? []
       const ohlcv = result.indicators?.quote?.[0]
       if (!ohlcv || timestamps.length === 0) {
-        lastError = new Error(`Empty OHLCV for ${ticker}`)
+        lastError = new Error(`Empty OHLCV for ${ticker} (${range})`)
         continue
       }
 
       const bars: PriceBar[] = []
       for (let i = 0; i < timestamps.length; i++) {
-        const o = ohlcv.open?.[i], h = ohlcv.high?.[i]
-        const l = ohlcv.low?.[i],  c = ohlcv.close?.[i]
+        const o = ohlcv.open?.[i],  h = ohlcv.high?.[i]
+        const l = ohlcv.low?.[i],   c = ohlcv.close?.[i]
         if (o == null || h == null || l == null || c == null) continue
         const date = new Date(timestamps[i] * 1000).toISOString().split('T')[0]
         bars.push({ date, open: o, high: h, low: l, close: c, volume: ohlcv.volume?.[i] ?? 0 })
       }
 
-      console.log(`[yahoo] fetched ${bars.length} bars for ${ticker}`)
+      console.log(`[yahoo] fetched ${bars.length} bars for ${ticker} (range=${range})`)
       return bars
 
     } catch (e) {
@@ -74,7 +78,40 @@ export async function fetchYahooBars(
     }
   }
 
-  throw lastError ?? new Error(`Failed to fetch ${ticker}`)
+  throw lastError ?? new Error(`Failed to fetch ${ticker} (${range})`)
+}
+
+/**
+ * 分割取得でマージする
+ * 1) 10y（古いデータ）→ 2) 2y（直近・高精度）の順に取得し、
+ * 日付キーで後者優先でマージ → 日付昇順ソートして返す
+ *
+ * ・10y が失敗しても 2y だけで続行（警告のみ）
+ * ・重複日は 2y 側（新しいリクエスト）の値で上書き
+ */
+export async function fetchYahooBars(
+  ticker: string,
+  interval = '1d'
+): Promise<PriceBar[]> {
+  const map = new Map<string, PriceBar>()
+
+  // ── 1st chunk: 10年分（古い方から埋める） ──
+  try {
+    const old = await fetchYahooBarsRaw(ticker, '10y', interval)
+    for (const b of old) map.set(b.date, b)
+  } catch (e) {
+    console.warn('[yahoo] 10y fetch failed, falling back to 2y only:', e)
+  }
+
+  // ── 2nd chunk: 2年分（直近を正確な値で上書き） ──
+  const recent = await fetchYahooBarsRaw(ticker, '2y', interval)
+  for (const b of recent) map.set(b.date, b)
+
+  if (map.size === 0) throw new Error(`No bars fetched for ${ticker}`)
+
+  const merged = [...map.values()].sort((a, b) => a.date.localeCompare(b.date))
+  console.log(`[yahoo] merged total ${merged.length} bars for ${ticker}`)
+  return merged
 }
 
 export async function fetchBarsWithFx(ticker: string): Promise<{
@@ -84,31 +121,24 @@ export async function fetchBarsWithFx(ticker: string): Promise<{
   fxTicker: string | null
 }> {
   const { base, fx } = parseTicker(ticker)
-  const bars = await fetchYahooBars(base, '2y', '1d')
+  const bars = await fetchYahooBars(base)
 
   if (!fx) return { bars, fxRate: null, baseTicker: base, fxTicker: null }
 
   let fxBars: PriceBar[] = []
   try {
-    fxBars = await fetchYahooBars(fx, '2y', '1d')
+    fxBars = await fetchYahooBars(fx)
   } catch (e) {
     console.error('[yahoo] FX fetch failed:', e)
-    // FX取得失敗時はUSD元値を返す（混在よりマシ）
     return { bars, fxRate: null, baseTicker: base, fxTicker: fx }
   }
 
-  // 日付→レートのマップ
   const fxMap = new Map(fxBars.map(b => [b.date, b.close]))
-
-  // レートが存在しない日を前日レートで補完（forward fill）
-  const filledRates = forwardFillRates(
-    bars.map(b => b.date),
-    fxMap
-  )
+  const filledRates = forwardFillRates(bars.map(b => b.date), fxMap)
 
   const convertedBars: PriceBar[] = bars.map((b, i) => {
     const rate = filledRates[i]
-    if (!rate) return b   // 先頭数日で前日レートがない場合のみフォールバック
+    if (!rate) return b
     return {
       ...b,
       open:  parseFloat((b.open  * rate).toFixed(2)),
@@ -123,21 +153,15 @@ export async function fetchBarsWithFx(ticker: string): Promise<{
 }
 
 /**
- * 株の取引日リストに対して、FXレートを前日補完（forward fill）する
- * 例：株市場は開いているがFX市場データが欠けている日 → 直近の有効レートで補完
+ * 株の取引日リストに対して FX レートを前日補完（forward fill）する
  */
 function forwardFillRates(dates: string[], fxMap: Map<string, number>): (number | null)[] {
   const result: (number | null)[] = []
   let lastRate: number | null = null
-
   for (const date of dates) {
     const rate = fxMap.get(date)
-    if (rate != null) {
-      lastRate = rate
-    }
-    // forward fill：当日レートがなければ直近レートを使う
+    if (rate != null) lastRate = rate
     result.push(lastRate)
   }
-
   return result
 }

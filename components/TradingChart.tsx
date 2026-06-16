@@ -1,14 +1,20 @@
 'use client'
 import { useEffect, useRef } from 'react'
 import type { PriceBar } from '@/types'
-import { calcTSI, detectCrossSignals } from '@/lib/tsi'
-import type { TsiParams } from './TsiParamBar'
+import {
+  calcTSI, detectCrossSignals,
+  calcBollingerBands, calcMACD,
+} from '@/lib/tsi'
+import type { TsiParams, BBParams, MACDParams, ActiveIndicator } from './TsiParamBar'
 
 interface Props {
-  bars: PriceBar[]
-  symbolId: string
-  ticker: string
-  tsiParams: TsiParams
+  bars:        PriceBar[]
+  symbolId:    string
+  ticker:      string
+  tsiParams:   TsiParams
+  bbParams:    BBParams
+  macdParams:  MACDParams
+  activeIndicator: ActiveIndicator
 }
 
 type LWC       = typeof import('lightweight-charts')
@@ -22,14 +28,15 @@ interface ChartState {
   ro: ResizeObserver
   disposed: boolean
   activeSeries: SeriesAny[]
-  crossRef: { tsiSeries: SeriesAny | null; candleSeries: SeriesAny | null }
 }
 
-export default function TradingChart({ bars, ticker, tsiParams }: Props) {
+export default function TradingChart({
+  bars, ticker,
+  tsiParams, bbParams, macdParams, activeIndicator,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const stateRef     = useRef<ChartState | null>(null)
 
-  // ── 初期化：マウント時1回 ──
   useEffect(() => {
     if (!containerRef.current) return
     let cancelled = false
@@ -42,7 +49,6 @@ export default function TradingChart({ bars, ticker, tsiParams }: Props) {
       const container = containerRef.current
       container.innerHTML = ''
 
-      // 1つのチャートで全て管理（Pane分割でTSIを下部に配置）
       const chart = createChart(container, {
         width:  container.clientWidth,
         height: container.clientHeight,
@@ -64,25 +70,9 @@ export default function TradingChart({ bars, ticker, tsiParams }: Props) {
         timeScale: { borderColor: '#30363d', timeVisible: true, rightOffset: 5 },
       })
 
-      // Pane 1（TSI用）を追加
+      // Pane 1（インジケータ用）
       chart.addPane()
 
-      // Pane 0 の高さ比率を 62% に設定
-      const panes = chart.panes()
-      if (panes.length >= 2) {
-        const total = container.clientHeight
-        panes[0].setHeight(Math.floor(total * 0.62))
-        panes[1].setHeight(total - Math.floor(total * 0.62))
-      }
-
-      const crossRef: ChartState['crossRef'] = { tsiSeries: null, candleSeries: null }
-
-      // クロスヘア同期（1チャートなので縦線は自動同期、横線のみ手動）
-      chart.subscribeCrosshairMove(p => {
-        // 1チャートなので基本的に自動で同期される
-      })
-
-      // Resize observer
       const ro = new ResizeObserver(() => {
         const st = stateRef.current
         if (!st || st.disposed) return
@@ -90,23 +80,16 @@ export default function TradingChart({ bars, ticker, tsiParams }: Props) {
         const w = container.clientWidth
         try {
           chart.applyOptions({ width: w, height: h })
-          const panes = chart.panes()
-          if (panes.length >= 2) {
-            panes[0].setHeight(Math.floor(h * 0.62))
-            panes[1].setHeight(h - Math.floor(h * 0.62))
-          }
+          resizePanes(chart, h)
         } catch { /**/ }
       })
       ro.observe(container)
 
-      stateRef.current = {
-        lwc, chart, ro,
-        disposed: false,
-        activeSeries: [],
-        crossRef,
-      }
+      resizePanes(chart, container.clientHeight)
 
-      drawSeries(stateRef.current, bars, ticker, tsiParams)
+      stateRef.current = { lwc, chart, ro, disposed: false, activeSeries: [] }
+
+      drawSeries(stateRef.current, bars, ticker, tsiParams, bbParams, macdParams, activeIndicator)
     }
 
     init()
@@ -114,12 +97,11 @@ export default function TradingChart({ bars, ticker, tsiParams }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── bars / ticker / tsiParams 変化時に再描画 ──
   useEffect(() => {
     const st = stateRef.current
     if (!st || st.disposed) return
-    drawSeries(st, bars, ticker, tsiParams)
-  }, [bars, ticker, tsiParams])
+    drawSeries(st, bars, ticker, tsiParams, bbParams, macdParams, activeIndicator)
+  }, [bars, ticker, tsiParams, bbParams, macdParams, activeIndicator])
 
   function dispose() {
     const st = stateRef.current
@@ -139,14 +121,29 @@ export default function TradingChart({ bars, ticker, tsiParams }: Props) {
   )
 }
 
-// ── シリーズ差し替え＋描画 ──
-function drawSeries(st: ChartState, bars: PriceBar[], ticker: string, tsiParams: TsiParams) {
+function resizePanes(chart: IChart, totalH: number) {
+  const panes = chart.panes()
+  if (panes.length >= 2) {
+    panes[0].setHeight(Math.floor(totalH * 0.62))
+    panes[1].setHeight(totalH - Math.floor(totalH * 0.62))
+  }
+}
+
+function drawSeries(
+  st: ChartState,
+  bars: PriceBar[],
+  ticker: string,
+  tsiParams:  TsiParams,
+  bbParams:   BBParams,
+  macdParams: MACDParams,
+  activeIndicator: ActiveIndicator,
+) {
   if (st.disposed || bars.length === 0) return
 
   const { lwc, chart } = st
-  const { CandlestickSeries, LineSeries, LineStyle, createSeriesMarkers } = lwc
+  const { CandlestickSeries, LineSeries, HistogramSeries, LineStyle, createSeriesMarkers } = lwc
 
-  // 前回シリーズを安全削除
+  // 既存シリーズ削除
   for (const s of st.activeSeries) {
     try { chart.removeSeries(s) } catch { /**/ }
   }
@@ -159,66 +156,151 @@ function drawSeries(st: ChartState, bars: PriceBar[], ticker: string, tsiParams:
     borderUpColor: '#3fb950', borderDownColor: '#f85149',
     wickUpColor: '#3fb950', wickDownColor: '#f85149',
   }, 0)
-
-  // ── Pane 1: TSI・シグナル・ゼロライン ──
-  const tsiSeries  = chart.addSeries(LineSeries, { color: '#388bfd', lineWidth: 2 as 2, title: 'TSI' }, 1)
-  const sigSeries  = chart.addSeries(LineSeries, { color: '#d29922', lineWidth: 1 as 1, lineStyle: LineStyle.Dashed, title: 'Sig' }, 1)
-  const zeroSeries = chart.addSeries(LineSeries, { color: '#484f58', lineWidth: 1 as 1, lineStyle: LineStyle.Dotted, title: '-10' }, 1)
-
-  st.activeSeries = [
-    candleSeries as SeriesAny,
-    tsiSeries    as SeriesAny,
-    sigSeries    as SeriesAny,
-    zeroSeries   as SeriesAny,
-  ]
-  st.crossRef.candleSeries = candleSeries as SeriesAny
-  st.crossRef.tsiSeries    = tsiSeries    as SeriesAny
-
-  // ── データセット ──
   candleSeries.setData(bars.map(b => ({
     time: b.date as Time, open: b.open, high: b.high, low: b.low, close: b.close,
   })))
+  st.activeSeries.push(candleSeries as SeriesAny)
 
-  const tsiPoints = calcTSI(bars, tsiParams.long, tsiParams.short, tsiParams.signal)
-  const signals   = detectCrossSignals(tsiPoints, bars, -10)
-
-  tsiSeries.setData(tsiPoints.map(p => ({ time: p.date as Time, value: p.tsi })))
-  sigSeries.setData(tsiPoints.map(p => ({ time: p.date as Time, value: p.signal })))
-
-  if (tsiPoints.length > 0) {
-    zeroSeries.setData([
-      { time: tsiPoints[0].date as Time,                    value: -10 },
-      { time: tsiPoints[tsiPoints.length - 1].date as Time, value: -10 },
-    ])
+  // ── ボリンジャーバンド（Pane 0 に重ねて表示） ──
+  if (activeIndicator === 'bb') {
+    const bbData = calcBollingerBands(bars, bbParams.period, bbParams.stdDev)
+    const bbUpper = chart.addSeries(LineSeries, {
+      color: '#c678dd', lineWidth: 1 as 1, title: `BB+${bbParams.stdDev}σ`,
+      lineStyle: LineStyle.Solid,
+    }, 0)
+    const bbMid = chart.addSeries(LineSeries, {
+      color: '#c678dd99', lineWidth: 1 as 1, title: `BB Mid`,
+      lineStyle: LineStyle.Dashed,
+    }, 0)
+    const bbLower = chart.addSeries(LineSeries, {
+      color: '#c678dd', lineWidth: 1 as 1, title: `BB-${bbParams.stdDev}σ`,
+      lineStyle: LineStyle.Solid,
+    }, 0)
+    bbUpper.setData(bbData.map(p => ({ time: p.date as Time, value: p.upper })))
+    bbMid.setData(bbData.map(p => ({ time: p.date as Time, value: p.middle })))
+    bbLower.setData(bbData.map(p => ({ time: p.date as Time, value: p.lower })))
+    st.activeSeries.push(bbUpper as SeriesAny, bbMid as SeriesAny, bbLower as SeriesAny)
   }
 
-  // GCマーカー
-  if (signals.length > 0) {
-    createSeriesMarkers(tsiSeries, signals.map(s => ({
-      time: s.date as Time, position: 'belowBar' as const, shape: 'arrowUp' as const,
-      color: s.type === 'golden_below' ? '#f85149' : '#3fb950',
-      size: 1, text: s.type === 'golden_below' ? 'GC<-10' : 'GC>-10',
+  // ── Pane 1: インジケータ ──
+  if (activeIndicator === 'tsi') {
+    // TSI + シグナル + ゼロライン
+    const tsiSeries  = chart.addSeries(LineSeries, { color: '#388bfd', lineWidth: 2 as 2, title: 'TSI' }, 1)
+    const sigSeries  = chart.addSeries(LineSeries, {
+      color: '#d29922', lineWidth: 1 as 1, lineStyle: LineStyle.Dashed, title: 'Sig',
+    }, 1)
+    const zeroSeries = chart.addSeries(LineSeries, {
+      color: '#484f58', lineWidth: 1 as 1, lineStyle: LineStyle.Dotted, title: '-10',
+    }, 1)
+
+    const tsiPoints = calcTSI(bars, tsiParams.long, tsiParams.short, tsiParams.signal)
+    const signals   = detectCrossSignals(tsiPoints, bars, -10)
+
+    tsiSeries.setData(tsiPoints.map(p => ({ time: p.date as Time, value: p.tsi })))
+    sigSeries.setData(tsiPoints.map(p => ({ time: p.date as Time, value: p.signal })))
+    if (tsiPoints.length > 0) {
+      zeroSeries.setData([
+        { time: tsiPoints[0].date as Time,                    value: -10 },
+        { time: tsiPoints[tsiPoints.length - 1].date as Time, value: -10 },
+      ])
+    }
+
+    // マーカー（GC=上矢印緑、DC=下矢印赤）
+    if (signals.length > 0) {
+      const tsiMarkers = signals.map(s => {
+        const isGolden = s.type === 'golden_below' || s.type === 'golden_above'
+        return {
+          time:     s.date as Time,
+          position: isGolden ? 'belowBar' as const : 'aboveBar' as const,
+          shape:    isGolden ? 'arrowUp' as const  : 'arrowDown' as const,
+          color:    isGolden ? '#3fb950' : '#f85149',
+          size:     1,
+          text:     isGolden
+            ? (s.type === 'golden_below' ? 'GC<-10' : 'GC')
+            : (s.type === 'dead_below'   ? 'DC<-10' : 'DC'),
+        }
+      })
+      createSeriesMarkers(tsiSeries, tsiMarkers)
+
+      // ローソク足にも同じマーカー（テキストなし）
+      createSeriesMarkers(candleSeries, signals.map(s => {
+        const isGolden = s.type === 'golden_below' || s.type === 'golden_above'
+        return {
+          time:     s.date as Time,
+          position: isGolden ? 'belowBar' as const : 'aboveBar' as const,
+          shape:    isGolden ? 'arrowUp' as const  : 'arrowDown' as const,
+          color:    isGolden ? '#3fb950' : '#f85149',
+          size:     1,
+          text:     '',
+        }
+      }))
+    }
+
+    st.activeSeries.push(tsiSeries as SeriesAny, sigSeries as SeriesAny, zeroSeries as SeriesAny)
+
+    // 通知
+    if (signals.length > 0 && typeof window !== 'undefined' && Notification.permission === 'granted') {
+      const last = bars[bars.length - 1]?.date
+      const hit  = signals.find(s => s.date === last)
+      if (hit) {
+        const isGolden = hit.type === 'golden_below' || hit.type === 'golden_above'
+        new Notification(`${isGolden ? '📈' : '📉'} ${ticker} シグナル検出`, {
+          body: isGolden
+            ? (hit.type === 'golden_below' ? '▲ -10以下でゴールデンクロス（強い買いシグナル）' : '▲ ゴールデンクロス')
+            : (hit.type === 'dead_below'   ? '▼ -10以下でデッドクロス（強い売りシグナル）'   : '▼ デッドクロス'),
+          icon: '/icon-192.png',
+        })
+      }
+    }
+
+  } else if (activeIndicator === 'macd') {
+    // MACD Line + Signal + Histogram
+    const macdData = calcMACD(bars, macdParams.fast, macdParams.slow, macdParams.signal)
+
+    const macdSeries = chart.addSeries(LineSeries, {
+      color: '#e5c07b', lineWidth: 2 as 2, title: 'MACD',
+    }, 1)
+    const macdSig = chart.addSeries(LineSeries, {
+      color: '#f85149', lineWidth: 1 as 1, lineStyle: LineStyle.Dashed, title: 'Signal',
+    }, 1)
+    const histSeries = chart.addSeries(HistogramSeries, {
+      color: '#3fb950', title: 'Hist',
+    }, 1)
+
+    macdSeries.setData(macdData.map(p => ({ time: p.date as Time, value: p.macd })))
+    macdSig.setData(macdData.map(p => ({ time: p.date as Time, value: p.signal })))
+    histSeries.setData(macdData.map(p => ({
+      time:  p.date as Time,
+      value: p.histogram,
+      color: p.histogram >= 0 ? '#3fb95088' : '#f8514988',
     })))
-    createSeriesMarkers(candleSeries, signals.map(s => ({
-      time: s.date as Time, position: 'belowBar' as const, shape: 'arrowUp' as const,
-      color: s.type === 'golden_below' ? '#f85149' : '#3fb950',
-      size: 1, text: '',
-    })))
+
+    st.activeSeries.push(macdSeries as SeriesAny, macdSig as SeriesAny, histSeries as SeriesAny)
+
+  } else if (activeIndicator === 'bb') {
+    // BB のとき Pane 1 はパーセント帯（%B）を表示
+    const bbData = calcBollingerBands(bars, bbParams.period, bbParams.stdDev)
+    const pctB = bbData.map(p => {
+      const range = p.upper - p.lower
+      const close = bars.find(b => b.date === p.date)?.close ?? p.middle
+      return { time: p.date as Time, value: range > 0 ? (close - p.lower) / range * 100 : 50 }
+    })
+    const pctSeries = chart.addSeries(LineSeries, {
+      color: '#c678dd', lineWidth: 2 as 2, title: '%B',
+    }, 1)
+    const upperRef = chart.addSeries(LineSeries, {
+      color: '#c678dd44', lineWidth: 1 as 1, lineStyle: LineStyle.Dotted, title: '100',
+    }, 1)
+    const lowerRef = chart.addSeries(LineSeries, {
+      color: '#c678dd44', lineWidth: 1 as 1, lineStyle: LineStyle.Dotted, title: '0',
+    }, 1)
+    pctSeries.setData(pctB)
+    if (pctB.length > 0) {
+      upperRef.setData([{ time: pctB[0].time, value: 100 }, { time: pctB[pctB.length - 1].time, value: 100 }])
+      lowerRef.setData([{ time: pctB[0].time, value: 0   }, { time: pctB[pctB.length - 1].time, value: 0   }])
+    }
+    st.activeSeries.push(pctSeries as SeriesAny, upperRef as SeriesAny, lowerRef as SeriesAny)
   }
 
   chart.timeScale().fitContent()
-
-  // 通知
-  if (signals.length > 0 && typeof window !== 'undefined' && Notification.permission === 'granted') {
-    const last = bars[bars.length - 1]?.date
-    const hit  = signals.find(s => s.date === last)
-    if (hit) {
-      new Notification(`📈 ${ticker} シグナル検出`, {
-        body: hit.type === 'golden_below'
-          ? '▲ -10以下でゴールデンクロス（強い買いシグナル）'
-          : '▲ -10以上でゴールデンクロス',
-        icon: '/icon-192.png',
-      })
-    }
-  }
 }

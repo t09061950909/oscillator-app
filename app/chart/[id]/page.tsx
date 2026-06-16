@@ -4,7 +4,9 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { PriceBar } from '@/types'
 import TradingChart from '@/components/TradingChart'
-import TsiParamBar, { type TsiParams } from '@/components/TsiParamBar'
+import TsiParamBar, {
+  type TsiParams, type BBParams, type MACDParams, type ActiveIndicator,
+} from '@/components/TsiParamBar'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -17,7 +19,9 @@ const INTERVALS: { value: Interval; label: string }[] = [
   { value: '1mo', label: '月足' },
 ]
 
-const DEFAULT_TSI: TsiParams = { long: 12, short: 6, signal: 3 }
+const DEFAULT_TSI:  TsiParams  = { long: 12, short: 6, signal: 3 }
+const DEFAULT_BB:   BBParams   = { period: 20, stdDev: 2 }
+const DEFAULT_MACD: MACDParams = { fast: 12, slow: 26, signal: 9 }
 
 export default function ChartPage({ params }: Props) {
   const resolvedParams = use(params)
@@ -29,12 +33,15 @@ export default function ChartPage({ params }: Props) {
   const ticker   = searchParams.get('ticker') ?? ''
   const name     = searchParams.get('name')   ?? ticker
 
-  const [bars, setBars]             = useState<PriceBar[]>([])
-  const [interval, setInterval]     = useState<Interval>('1d')
-  const [tsiParams, setTsiParams]   = useState<TsiParams>(DEFAULT_TSI)
-  const [loading, setLoading]       = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [error, setError]           = useState('')
+  const [bars, setBars]                   = useState<PriceBar[]>([])
+  const [interval, setInterval]           = useState<Interval>('1d')
+  const [tsiParams, setTsiParams]         = useState<TsiParams>(DEFAULT_TSI)
+  const [bbParams,  setBBParams]          = useState<BBParams>(DEFAULT_BB)
+  const [macdParams, setMACDParams]       = useState<MACDParams>(DEFAULT_MACD)
+  const [activeInd, setActiveInd]         = useState<ActiveIndicator>('tsi')
+  const [loading, setLoading]             = useState(true)
+  const [refreshing, setRefreshing]       = useState(false)
+  const [error, setError]                 = useState('')
 
   useEffect(() => { if (symbolId) loadBars('1d') }, [symbolId])
   useEffect(() => { if (bars.length) loadBars(interval) }, [interval])
@@ -93,7 +100,6 @@ export default function ChartPage({ params }: Props) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* 足種切替 */}
           <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
             {INTERVALS.map(({ value, label }) => (
               <button key={value} onClick={() => setInterval(value)}
@@ -123,8 +129,17 @@ export default function ChartPage({ params }: Props) {
         </div>
       </header>
 
-      {/* ── TSIパラメータバー ── */}
-      <TsiParamBar params={tsiParams} onChange={setTsiParams} />
+      {/* ── パラメータバー ── */}
+      <TsiParamBar
+        tsiParams={tsiParams}
+        bbParams={bbParams}
+        macdParams={macdParams}
+        active={activeInd}
+        onTsiChange={setTsiParams}
+        onBBChange={setBBParams}
+        onMACDChange={setMACDParams}
+        onActiveChange={setActiveInd}
+      />
 
       {/* ── チャートエリア ── */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
@@ -151,6 +166,9 @@ export default function ChartPage({ params }: Props) {
             symbolId={symbolId}
             ticker={ticker}
             tsiParams={tsiParams}
+            bbParams={bbParams}
+            macdParams={macdParams}
+            activeIndicator={activeInd}
           />
         )}
       </div>
