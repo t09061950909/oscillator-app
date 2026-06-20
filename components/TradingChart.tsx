@@ -1,11 +1,15 @@
 'use client'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type MutableRefObject } from 'react'
 import type { PriceBar } from '@/types'
 import {
   calcTSI, detectCrossSignals,
   calcBollingerBands, calcMACD,
 } from '@/lib/tsi'
 import type { TsiParams, BBParams, MACDParams, ActiveIndicator } from './TsiParamBar'
+import VixPanel from './VixPanel'
+import MacroPanel from './MacroPanel'
+import ScorePanel from './ScorePanel'
+import { useSignalScore, type EnhancedMarker } from '@/hooks/useSignalScore'
 
 interface Props {
   bars:        PriceBar[]
@@ -36,6 +40,11 @@ export default function TradingChart({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const stateRef     = useRef<ChartState | null>(null)
+  const { handleVixChange, handleMacroChange, enhanceMarkers, lastScore } = useSignalScore()
+
+  // enhanceMarkers を drawSeries から参照できるよう ref に保持
+  const enhanceMarkersRef = useRef(enhanceMarkers)
+  useEffect(() => { enhanceMarkersRef.current = enhanceMarkers }, [enhanceMarkers])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -89,7 +98,7 @@ export default function TradingChart({
 
       stateRef.current = { lwc, chart, ro, disposed: false, activeSeries: [] }
 
-      drawSeries(stateRef.current, bars, ticker, tsiParams, bbParams, macdParams, activeIndicator)
+      drawSeries(stateRef.current, bars, ticker, tsiParams, bbParams, macdParams, activeIndicator, enhanceMarkersRef)
     }
 
     init()
@@ -100,7 +109,7 @@ export default function TradingChart({
   useEffect(() => {
     const st = stateRef.current
     if (!st || st.disposed) return
-    drawSeries(st, bars, ticker, tsiParams, bbParams, macdParams, activeIndicator)
+    drawSeries(st, bars, ticker, tsiParams, bbParams, macdParams, activeIndicator, enhanceMarkersRef)
   }, [bars, ticker, tsiParams, bbParams, macdParams, activeIndicator])
 
   function dispose() {
@@ -114,10 +123,23 @@ export default function TradingChart({
   }
 
   return (
-    <div
-      ref={containerRef}
-      style={{ width: '100%', height: 'calc(100vh - 88px)' }}
-    />
+    <div style={{ position: 'relative', width: '100%', height: 'calc(100vh - 88px)' }}>
+      {/* チャート本体 */}
+      <div
+        ref={containerRef}
+        style={{ width: '100%', height: '100%' }}
+      />
+      {/* 右上オーバーレイ: VIX + マクロ + 複合スコア */}
+      <div style={{
+        position: 'absolute', top: 12, right: 12,
+        width: 200, zIndex: 10,
+        display: 'flex', flexDirection: 'column', gap: 6,
+      }}>
+        <VixPanel onVixChange={handleVixChange} />
+        <MacroPanel onMacroChange={handleMacroChange} />
+        <ScorePanel score={lastScore} />
+      </div>
+    </div>
   )
 }
 
@@ -137,6 +159,7 @@ function drawSeries(
   bbParams:   BBParams,
   macdParams: MACDParams,
   activeIndicator: ActiveIndicator,
+  enhanceMarkersRef: MutableRefObject<(markers: EnhancedMarker[]) => EnhancedMarker[]>,
 ) {
   if (st.disposed || bars.length === 0) return
 
@@ -207,7 +230,7 @@ function drawSeries(
 
     // マーカー（GC=上矢印緑、DC=下矢印赤）
     if (signals.length > 0) {
-      const tsiMarkers = signals.map(s => {
+      const rawMarkers = signals.map(s => {
         const isGolden = s.type === 'golden_below' || s.type === 'golden_above'
         return {
           time:     s.date as Time,
@@ -220,6 +243,8 @@ function drawSeries(
             : (s.type === 'dead_below'   ? 'DC<-10' : 'DC'),
         }
       })
+      // VIX状態に応じてマーカーを強調
+      const tsiMarkers = enhanceMarkersRef.current(rawMarkers)
       createSeriesMarkers(tsiSeries, tsiMarkers)
 
       // ローソク足にも同じマーカー（テキストなし）

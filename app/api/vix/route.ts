@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import yahooFinance from 'yahoo-finance2'
+import YahooFinanceClass from 'yahoo-finance2'
+
+const yahooFinance = new YahooFinanceClass()
 
 export const runtime = 'nodejs'
-// 5分キャッシュ（VIXはリアルタイムだが過剰リクエスト防止）
 export const revalidate = 300
 
 export interface VixData {
