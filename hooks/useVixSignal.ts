@@ -5,12 +5,12 @@ import type { VixData } from '@/app/api/vix/route'
 
 // Lightweight Charts v5 のマーカー型に合わせた定義
 export interface EnhancedMarker {
-  time: number
+  time:     import('lightweight-charts').Time
   position: 'belowBar' | 'aboveBar'
-  color: string
-  shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square'
-  text?: string
-  size?: number
+  color:    string
+  shape:    'arrowUp' | 'arrowDown' | 'circle' | 'square'
+  text?:    string
+  size?:    number
 }
 
 /**

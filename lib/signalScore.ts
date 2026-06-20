@@ -11,7 +11,7 @@ import type { MacroData } from '@/app/api/macro/route'
 
 // Lightweight Charts v5 マーカー型（再エクスポート用）
 export interface EnhancedMarker {
-  time:     number
+  time:     import('lightweight-charts').Time
   position: 'belowBar' | 'aboveBar'
   color:    string
   shape:    'arrowUp' | 'arrowDown' | 'circle' | 'square'
