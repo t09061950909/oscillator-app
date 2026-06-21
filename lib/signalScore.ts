@@ -194,20 +194,6 @@ export function formatScoreBreakdown(score: SignalScore): string {
     `  TSI: ${score.tsi > 0 ? '+' : ''}${score.tsi}`,
   ].join('\n')
 }
-
- * Phase 3: 複合シグナルスコアリングロジック
- *
- * 各指標のスコアを合算して買い/売りシグナルの強度を判定する。
- * React非依存の純粋関数のみ。Phase 4のアラート等でも再利用可能。
- */
-
-import type { VixData }   from '@/app/api/vix/route'
-import type { MacroData } from '@/app/api/macro/route'
-
-// Lightweight Charts v5 マーカー型（再エクスポート用）
-export interface EnhancedMarker {
-  time:     import('lightweight-charts').Time
-  position: 'belowBar' | 'aboveBar'
   color:    string
   shape:    'arrowUp' | 'arrowDown' | 'circle' | 'square'
   text?:    string
@@ -328,8 +314,8 @@ export function formatScoreBreakdown(score: SignalScore): string {
   return [
     `合計: ${score.total > 0 ? '+' : ''}${score.total} [${score.label}]`,
     `  VIX: ${score.vix > 0 ? '+' : ''}${score.vix}`,
-    `  CAPE: ${score.cape > 0 ? '+' : ''}${score.cape}`,
-    `  金利: ${score.rate > 0 ? '+' : ''}${score.rate}`,
+    `  CAPE: ${score.capeNA ? 'N/A' : `${score.cape > 0 ? '+' : ''}${score.cape}`}`,
+    `  金利: ${score.rateNA ? 'N/A' : `${score.rate > 0 ? '+' : ''}${score.rate}`}`,
     `  TSI: ${score.tsi > 0 ? '+' : ''}${score.tsi}`,
   ].join('\n')
 }
