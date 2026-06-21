@@ -12,7 +12,7 @@ import {
 
 export type { EnhancedMarker } from '@/lib/signalScore'
 
-export function useSignalScore() {
+export function useSignalScore(ticker: string = '') {
   const [vixData,      setVixData]      = useState<VixData    | null>(null)
   const [macroData,    setMacroData]    = useState<MacroData  | null>(null)
   const [lastScore,    setLastScore]    = useState<SignalScore | null>(null)
@@ -80,7 +80,7 @@ export function useSignalScore() {
     (markers: EnhancedMarker[]): EnhancedMarker[] => {
       return markers.map(marker => {
         const crossType = inferCrossType(marker)
-        const score = calcSignalScore(vixRef.current, macroRef.current, crossType)
+        const score = calcSignalScore(vixRef.current, macroRef.current, crossType, ticker)
         setLastScore(score)
         return {
           ...marker,

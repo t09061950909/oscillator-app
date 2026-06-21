@@ -338,14 +338,21 @@ export default function SignalPanel({
               </span>
               <span style={{ color: '#8b949e', minWidth: 28 }}>CAPE</span>
               <span style={{ color: macroData ? CAPE_STATUS[macroData.cape.status].color : '#484f58', fontWeight: 600, flex: 1, fontVariantNumeric: 'tabular-nums' }}>
-                {macroLoading ? '…' : macroData?.cape.value ? macroData.cape.value.toFixed(1) : '—'}
+                {score?.capeNA
+                  ? <span style={{ color: '#484f58', fontSize: 10 }}>N/A</span>
+                  : macroLoading ? '…' : macroData?.cape.value ? macroData.cape.value.toFixed(1) : '—'}
               </span>
               {score && (
                 <>
-                  <MiniBar value={score.cape} max={2} />
-                  <span style={{ fontSize: 10, color: score.cape >= 0 ? '#3fb950' : '#f85149', minWidth: 18, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {score.cape > 0 ? '+' : ''}{score.cape}
-                  </span>
+                  {score.capeNA
+                    ? <span style={{ fontSize: 10, color: '#484f58', minWidth: 58, textAlign: 'right' }}>対象外</span>
+                    : <>
+                        <MiniBar value={score.cape} max={2} />
+                        <span style={{ fontSize: 10, color: score.cape >= 0 ? '#3fb950' : '#f85149', minWidth: 18, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {score.cape > 0 ? '+' : ''}{score.cape}
+                        </span>
+                      </>
+                  }
                 </>
               )}
               <button style={S.btn} onClick={handleRefreshMacro} title="マクロ更新">↻</button>
@@ -358,14 +365,21 @@ export default function SignalPanel({
               </span>
               <span style={{ color: '#8b949e', minWidth: 28 }}>金利</span>
               <span style={{ color: macroData ? RATE_DIR[macroData.rate.direction].color : '#484f58', fontWeight: 600, flex: 1, fontVariantNumeric: 'tabular-nums' }}>
-                {macroLoading ? '…' : macroData?.rate.current ? `${macroData.rate.current.toFixed(2)}%` : '—'}
+                {score?.rateNA
+                  ? <span style={{ color: '#484f58', fontSize: 10 }}>N/A</span>
+                  : macroLoading ? '…' : macroData?.rate.current ? `${macroData.rate.current.toFixed(2)}%` : '—'}
               </span>
               {score && (
                 <>
-                  <MiniBar value={score.rate} max={1} />
-                  <span style={{ fontSize: 10, color: score.rate >= 0 ? '#3fb950' : '#f85149', minWidth: 18, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {score.rate > 0 ? '+' : ''}{score.rate}
-                  </span>
+                  {score.rateNA
+                    ? <span style={{ fontSize: 10, color: '#484f58', minWidth: 58, textAlign: 'right' }}>対象外</span>
+                    : <>
+                        <MiniBar value={score.rate} max={1} />
+                        <span style={{ fontSize: 10, color: score.rate >= 0 ? '#3fb950' : '#f85149', minWidth: 18, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {score.rate > 0 ? '+' : ''}{score.rate}
+                        </span>
+                      </>
+                  }
                 </>
               )}
             </div>

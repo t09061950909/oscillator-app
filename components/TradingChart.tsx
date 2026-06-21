@@ -44,7 +44,7 @@ export default function TradingChart({
     vixError, macroError,
     fetchVix, fetchMacro,
     enhanceMarkers,
-  } = useSignalScore()
+  } = useSignalScore(ticker)
 
   // enhanceMarkers を drawSeries から参照できるよう ref に保持
   const enhanceMarkersRef = useRef(enhanceMarkers)
