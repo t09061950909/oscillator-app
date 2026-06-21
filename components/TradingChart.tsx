@@ -6,9 +6,7 @@ import {
   calcBollingerBands, calcMACD,
 } from '@/lib/tsi'
 import type { TsiParams, BBParams, MACDParams, ActiveIndicator } from './TsiParamBar'
-import VixPanel from './VixPanel'
-import MacroPanel from './MacroPanel'
-import ScorePanel from './ScorePanel'
+import SignalPanel from './SignalPanel'
 import { useSignalScore, type EnhancedMarker } from '@/hooks/useSignalScore'
 
 interface Props {
@@ -40,7 +38,13 @@ export default function TradingChart({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const stateRef     = useRef<ChartState | null>(null)
-  const { handleVixChange, handleMacroChange, enhanceMarkers, lastScore } = useSignalScore()
+  const {
+    vixData, macroData, lastScore,
+    vixLoading, macroLoading,
+    vixError, macroError,
+    fetchVix, fetchMacro,
+    enhanceMarkers,
+  } = useSignalScore()
 
   // enhanceMarkers を drawSeries から参照できるよう ref に保持
   const enhanceMarkersRef = useRef(enhanceMarkers)
@@ -124,20 +128,23 @@ export default function TradingChart({
 
   return (
     <div style={{ position: 'relative', width: '100%', height: 'calc(100vh - 88px)' }}>
-      {/* チャート本体 */}
-      <div
-        ref={containerRef}
-        style={{ width: '100%', height: '100%' }}
-      />
-      {/* 右上オーバーレイ: VIX + マクロ + 複合スコア */}
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {/* 右上: 統合シグナルパネル */}
       <div style={{
-        position: 'absolute', top: 12, right: 12,
-        width: 200, zIndex: 10,
-        display: 'flex', flexDirection: 'column', gap: 6,
+        position: 'absolute', top: 8, right: 8,
+        width: 180, zIndex: 10,
       }}>
-        <VixPanel onVixChange={handleVixChange} />
-        <MacroPanel onMacroChange={handleMacroChange} />
-        <ScorePanel score={lastScore} />
+        <SignalPanel
+          vixData={vixData}
+          macroData={macroData}
+          score={lastScore}
+          onRefreshVix={fetchVix}
+          onRefreshMacro={fetchMacro}
+          vixLoading={vixLoading}
+          macroLoading={macroLoading}
+          vixError={vixError}
+          macroError={macroError}
+        />
       </div>
     </div>
   )

@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
-import type { VixData }   from '@/app/api/vix/route'
-import type { MacroData } from '@/app/api/macro/route'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import type { VixData }    from '@/app/api/vix/route'
+import type { MacroData }  from '@/app/api/macro/route'
 import {
   calcSignalScore,
   type SignalScore,
@@ -10,47 +10,78 @@ import {
   type EnhancedMarker,
 } from '@/lib/signalScore'
 
-// EnhancedMarker の再エクスポート（後方互換）
 export type { EnhancedMarker } from '@/lib/signalScore'
 
-/**
- * useSignalScore
- * VIX・マクロ・TSIの3指標を統合してシグナルスコアを管理するhook。
- * TradingChart で useVixSignal の代わりに使用する。
- */
 export function useSignalScore() {
-  const [vixData,   setVixData]   = useState<VixData   | null>(null)
-  const [macroData, setMacroData] = useState<MacroData | null>(null)
-  const [lastScore, setLastScore] = useState<SignalScore | null>(null)
+  const [vixData,      setVixData]      = useState<VixData    | null>(null)
+  const [macroData,    setMacroData]    = useState<MacroData  | null>(null)
+  const [lastScore,    setLastScore]    = useState<SignalScore | null>(null)
+  const [vixLoading,   setVixLoading]   = useState(true)
+  const [macroLoading, setMacroLoading] = useState(true)
+  const [vixError,     setVixError]     = useState<string | null>(null)
+  const [macroError,   setMacroError]   = useState<string | null>(null)
 
-  // drawSeries から参照するため ref でも保持
   const vixRef   = useRef<VixData   | null>(null)
   const macroRef = useRef<MacroData | null>(null)
+  const vixTimer   = useRef<NodeJS.Timeout | null>(null)
+  const macroTimer = useRef<NodeJS.Timeout | null>(null)
 
-  const handleVixChange = useCallback((data: VixData) => {
-    setVixData(data)
-    vixRef.current = data
+  // ── VIX fetch ────────────────────────────────────────
+  const fetchVix = useCallback(async () => {
+    try {
+      setVixLoading(true)
+      const res = await fetch('/api/vix')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json: VixData = await res.json()
+      setVixData(json)
+      vixRef.current = json
+      setVixError(null)
+    } catch (e) {
+      setVixError(e instanceof Error ? e.message : 'VIX取得失敗')
+    } finally {
+      setVixLoading(false)
+    }
   }, [])
 
-  const handleMacroChange = useCallback((data: MacroData) => {
-    setMacroData(data)
-    macroRef.current = data
+  // ── マクロ fetch ──────────────────────────────────────
+  const fetchMacro = useCallback(async () => {
+    try {
+      setMacroLoading(true)
+      const res = await fetch('/api/macro')
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        throw new Error(json.detail ?? `HTTP ${res.status}`)
+      }
+      const json: MacroData = await res.json()
+      setMacroData(json)
+      macroRef.current = json
+      setMacroError(null)
+    } catch (e) {
+      setMacroError(e instanceof Error ? e.message : 'マクロ取得失敗')
+    } finally {
+      setMacroLoading(false)
+    }
   }, [])
 
-  /**
-   * マーカー配列をスコアに応じて強調する関数。
-   * enhanceMarkersRef.current として drawSeries に渡す。
-   */
+  // ── 初期fetch + 自動更新 ──────────────────────────────
+  useEffect(() => {
+    fetchVix()
+    fetchMacro()
+    vixTimer.current   = setInterval(fetchVix,   5  * 60 * 1000) // 5分
+    macroTimer.current = setInterval(fetchMacro, 60 * 60 * 1000) // 1時間
+    return () => {
+      if (vixTimer.current)   clearInterval(vixTimer.current)
+      if (macroTimer.current) clearInterval(macroTimer.current)
+    }
+  }, [fetchVix, fetchMacro])
+
+  // ── マーカー強調 ──────────────────────────────────────
   const enhanceMarkers = useCallback(
     (markers: EnhancedMarker[]): EnhancedMarker[] => {
       return markers.map(marker => {
-        // TSIクロスタイプをマーカーテキストから逆引き
         const crossType = inferCrossType(marker)
         const score = calcSignalScore(vixRef.current, macroRef.current, crossType)
-
-        // 最新スコアを state に反映（パネル表示用）
         setLastScore(score)
-
         return {
           ...marker,
           color: score.color,
@@ -59,35 +90,25 @@ export function useSignalScore() {
         }
       })
     },
-    // vixRef/macroRef は ref なので依存配列不要
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   )
 
   return {
-    vixData,
-    macroData,
-    lastScore,
-    handleVixChange,
-    handleMacroChange,
+    vixData, macroData, lastScore,
+    vixLoading, macroLoading,
+    vixError, macroError,
+    fetchVix, fetchMacro,
     enhanceMarkers,
   }
 }
 
-// ── ヘルパー ──────────────────────────────────────────
-
-/** マーカーのテキスト・方向からTSIクロスタイプを推定 */
 function inferCrossType(marker: EnhancedMarker): TsiCrossType {
   if (marker.position === 'belowBar') {
-    // 買いマーカー
     return marker.text?.includes('<-10') ? 'golden_below' : 'golden_above'
-  } else {
-    // 売りマーカー
-    return marker.text?.includes('<-10') ? 'dead_below' : 'dead_above'
   }
+  return marker.text?.includes('<-10') ? 'dead_below' : 'dead_above'
 }
 
-/** スコアに応じたマーカーテキストを生成 */
 function buildMarkerText(marker: EnhancedMarker, score: SignalScore): string {
   const base = marker.text ?? ''
   if (score.total >= 5) return `${base} 🔥${score.total}`
