@@ -142,21 +142,31 @@ function ScoreGuideModal({ onClose }: { onClose: () => void }) {
 
         {/* 合計スコア基準 */}
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#8b949e', marginBottom: 6 }}>合計スコア → 判定</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#8b949e', marginBottom: 4 }}>正規化スコア（0〜100）→ 判定</div>
+          <div style={{ fontSize: 10, color: '#484f58', marginBottom: 6, lineHeight: 1.5 }}>
+            カテゴリ別の最大・最小スコアで正規化するため、対象外指標があっても公平に判定されます。
+          </div>
           {[
-            { range: '+5以上', label: '🔥 強い買い',  color: '#f59e0b' },
-            { range: '+3〜+4', label: '✅ 買い',      color: '#3fb950' },
-            { range: '+1〜+2', label: '🔵 弱い買い',  color: '#58a6ff' },
-            { range: '0',      label: '⬜ 中立',      color: '#8b949e' },
-            { range: '-1',     label: '🟡 弱い売り',  color: '#d29922' },
-            { range: '-2〜-3', label: '🔴 売り警戒',  color: '#f85149' },
-            { range: '-4以下', label: '🚨 強い売り',  color: '#ff0000' },
+            { range: '75以上', label: '🔥 強い買い',  color: '#f59e0b' },
+            { range: '62〜74', label: '✅ 買い',      color: '#3fb950' },
+            { range: '55〜61', label: '🔵 弱い買い',  color: '#58a6ff' },
+            { range: '43〜54', label: '⬜ 中立',      color: '#8b949e' },
+            { range: '43〜42', label: '🟡 弱い売り',  color: '#d29922' },
+            { range: '34〜33', label: '🔴 売り警戒',  color: '#f85149' },
+            { range: '20以下', label: '🚨 強い売り',  color: '#ff0000' },
           ].map(r => (
             <div key={r.range} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #0d1117' }}>
               <span style={{ fontSize: 11, color: '#8b949e', fontVariantNumeric: 'tabular-nums' }}>{r.range}</span>
               <span style={{ fontSize: 11, color: r.color, fontWeight: 600 }}>{r.label}</span>
             </div>
           ))}
+          <div style={{ marginTop: 8, fontSize: 10, color: '#484f58', lineHeight: 1.5 }}>
+            カテゴリ別適用指標:<br/>
+            米国株: VIX+CAPE+金利+TSI<br/>
+            米国株(FX変換): VIX+CAPE+金利+TSI+PPP<br/>
+            日本株: VIX+金利+TSI<br/>
+            FX・商品・暗号資産: VIX+TSI
+          </div>
         </div>
 
         {/* VIX */}
@@ -330,6 +340,11 @@ export default function SignalPanel({
             <span style={{ fontSize: 15, fontWeight: 700, color: scoreColor, fontVariantNumeric: 'tabular-nums' }}>
               {scoreTotal}
             </span>
+            {score && (
+              <span style={{ fontSize: 10, color: '#484f58', fontVariantNumeric: 'tabular-nums' }}>
+                ({score.normalized})
+              </span>
+            )}
             <span style={{ fontSize: 10, color: scoreColor }}>{scoreLabel}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

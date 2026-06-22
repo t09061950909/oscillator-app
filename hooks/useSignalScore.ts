@@ -90,6 +90,13 @@ export function useSignalScore(ticker: string = '') {
     }
   }, [fetchVix, fetchMacro, fetchPpp])
 
+  // マーカー発生に依存せず、データ取得のたびにスコアを常時更新
+  useEffect(() => {
+    const pppDev = pppRef.current?.deviation ?? null
+    const score  = calcSignalScore(vixRef.current, macroRef.current, null, ticker, pppDev)
+    setLastScore(score)
+  }, [vixData, macroData, pppData, ticker])
+
   const enhanceMarkers = useCallback(
     (markers: EnhancedMarker[]): EnhancedMarker[] => {
       return markers.map(marker => {

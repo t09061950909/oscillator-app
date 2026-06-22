@@ -4,8 +4,8 @@ export const runtime = 'nodejs'
 export const revalidate = 86400
 
 export interface PppData {
-  spotRate:  number
-  pppRate:   number
+  spotRate:  number   // 実勢レート JPY/USD
+  pppRate:   number   // PPP理論レート JPY/USD
   deviation: number   // (spot/ppp - 1) * 100 %
   direction: 'cheap' | 'fair' | 'expensive_mild' | 'expensive_extreme'
   updatedAt: string
@@ -41,21 +41,29 @@ export async function GET() {
     const apiKey = process.env.FRED_API_KEY
     if (!apiKey) throw new Error('FRED_API_KEY is not set')
 
+    // DEXJPUS: JPY/USD 実勢レート（日次）
+    // PPPJPN: 日本のPPP換算レート USD per JPY（年次・IMF/World Bank）
+    //         → JPY/USD に変換するため逆数を取る
     const [spotObs, pppObs] = await Promise.all([
-      fetchFredSeries('DEXJPUS',      apiKey, 5),
-      fetchFredSeries('JPNPPPFXRATE', apiKey, 3),
+      fetchFredSeries('DEXJPUS', apiKey, 5),
+      fetchFredSeries('PPPJPN',  apiKey, 3),
     ])
 
     if (!spotObs.length) throw new Error('DEXJPUS: no data')
-    if (!pppObs.length)  throw new Error('JPNPPPFXRATE: no data')
+    if (!pppObs.length)  throw new Error('PPPJPN: no data')
 
-    const spotRate  = spotObs[0].value
-    const pppRate   = pppObs[0].value
+    const spotRate = spotObs[0].value          // JPY/USD 例: 155.0
+    // PPPJPN は USD per JPY (例: 0.0094) → JPY/USD に変換
+    const pppRateRaw = pppObs[0].value
+    const pppRate    = pppRateRaw < 1
+      ? Math.round((1 / pppRateRaw) * 100) / 100   // USD per JPY → JPY/USD
+      : pppRateRaw                                   // 既にJPY/USD形式の場合
+
     const deviation = Math.round(((spotRate / pppRate) - 1) * 10000) / 100
 
     const data: PppData = {
       spotRate:  Math.round(spotRate * 100) / 100,
-      pppRate:   Math.round(pppRate  * 100) / 100,
+      pppRate,
       deviation,
       direction: getDirection(deviation),
       updatedAt: spotObs[0].date,
