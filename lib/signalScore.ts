@@ -51,8 +51,10 @@ export interface SignalScore {
   cape:     number
   rate:     number
   tsi:      number
+  ppp:      number   // PPP乖離率スコア（FX銘柄のみ有効）
   capeNA:   boolean
   rateNA:   boolean
+  pppNA:    boolean  // PPPが非適用（FX変換なし銘柄）
   category: TickerCategory
   strength: 'strong_buy' | 'buy' | 'weak_buy' | 'neutral' | 'weak_sell' | 'sell' | 'strong_sell'
   label:    string
@@ -102,6 +104,19 @@ export function calcTsiScore(crossType: TsiCrossType): number {
   }
 }
 
+// ── PPP乖離率スコア（FX銘柄向け） ────────────────────
+// 円ベース投資家の観点: 円安 = 米国株の円換算評価が上がる = 買い有利
+// pppDeviation = (実勢レート / PPPレート - 1) × 100 (%)
+// 例: 実勢155円 / PPP理論値105円 → +47.6%（円安乖離）
+export function calcPppScore(pppDeviation: number | null): number {
+  if (pppDeviation === null) return 0
+  if (pppDeviation >= 40)   return 0   // 極端な円安: 既に高値圏、追加投資リスク
+  if (pppDeviation >= 20)   return 1   // 円安圏: 円換算で有利
+  if (pppDeviation >= -20)  return 0   // 適正圏: 中立
+  if (pppDeviation >= -40)  return -1  // 円高方向: 円換算で不利
+  return -2                             // 極端な円高: 大きく不利
+}
+
 // ── strength変換 ──────────────────────────────────────
 function toStrength(total: number): SignalScore['strength'] {
   if (total >= 5)  return 'strong_buy'
@@ -124,26 +139,34 @@ const STRENGTH_META: Record<SignalScore['strength'], { label: string; color: str
 }
 
 // ── メイン計算 ────────────────────────────────────────
+// PPPが適用される銘柄: *FXCODE形式（FX変換付き米国株・日本株）
+export function isPppApplicable(ticker: string): boolean {
+  return ticker.includes('*')
+}
+
 export function calcSignalScore(
-  vix:       VixData    | null,
-  macro:     MacroData  | null,
-  crossType: TsiCrossType,
-  ticker:    string = '',
+  vix:          VixData    | null,
+  macro:        MacroData  | null,
+  crossType:    TsiCrossType,
+  ticker:       string = '',
+  pppDeviation: number | null = null,
 ): SignalScore {
   const category = detectTickerCategory(ticker)
   const capeNA   = !isCapeApplicable(category)
   const rateNA   = !isRateApplicable(category)
+  const pppNA    = !isPppApplicable(ticker)
 
   const vixS  = calcVixScore(vix)
   const capeS = capeNA ? 0 : calcCapeScore(macro)
   const rateS = rateNA ? 0 : calcRateScore(macro)
   const tsiS  = calcTsiScore(crossType)
-  const total = vixS + capeS + rateS + tsiS
+  const pppS  = pppNA  ? 0 : calcPppScore(pppDeviation)
+  const total = vixS + capeS + rateS + tsiS + pppS
 
   const strength = toStrength(total)
   const meta     = STRENGTH_META[strength]
 
-  return { total, vix: vixS, cape: capeS, rate: rateS, tsi: tsiS, capeNA, rateNA, category, strength, ...meta }
+  return { total, vix: vixS, cape: capeS, rate: rateS, tsi: tsiS, ppp: pppS, capeNA, rateNA, pppNA, category, strength, ...meta }
 }
 
 export function formatScoreBreakdown(score: SignalScore): string {
@@ -152,6 +175,7 @@ export function formatScoreBreakdown(score: SignalScore): string {
     `  VIX:  ${score.vix > 0 ? '+' : ''}${score.vix}`,
     `  CAPE: ${score.capeNA ? 'N/A' : `${score.cape > 0 ? '+' : ''}${score.cape}`}`,
     `  金利: ${score.rateNA ? 'N/A' : `${score.rate > 0 ? '+' : ''}${score.rate}`}`,
+    `  PPP:  ${score.pppNA  ? 'N/A' : `${score.ppp  > 0 ? '+' : ''}${score.ppp}`}`,
     `  TSI:  ${score.tsi > 0 ? '+' : ''}${score.tsi}`,
   ].join('\n')
 }

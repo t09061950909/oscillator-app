@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react'
 import type { VixData }    from '@/app/api/vix/route'
 import type { MacroData }  from '@/app/api/macro/route'
+import type { PppData }    from '@/app/api/ppp/route'
 import type { SignalScore } from '@/lib/signalScore'
 
 // ── 設定定数 ──────────────────────────────────────────
@@ -24,6 +25,13 @@ const RATE_DIR = {
   cutting: { icon: '↓', label: '利下げ', color: '#3fb950' },
   hold:    { icon: '→', label: '据置き', color: '#8b949e' },
   hiking:  { icon: '↑', label: '利上げ', color: '#f85149' },
+} as const
+
+const PPP_DIR = {
+  cheap:             { icon: '💴', label: '円高乖離', color: '#f85149' },  // 円高 → 円換算不利
+  fair:              { icon: '🟰', label: '適正圏',   color: '#8b949e' },
+  expensive_mild:    { icon: '📈', label: '円安圏',   color: '#3fb950' },  // 円安 → 円換算有利
+  expensive_extreme: { icon: '🔺', label: '極円安',   color: '#d29922' },  // 極端な円安 → 中立
 } as const
 
 const S = {
@@ -217,7 +225,7 @@ function ScoreGuideModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* TSI */}
-        <div>
+        <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#8b949e', marginBottom: 4 }}>TSIシグナル（-2〜+2）</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th}>シグナル</th><th style={th}>条件</th><th style={{ ...th, textAlign: 'center' }}>スコア</th></tr></thead>
@@ -238,6 +246,32 @@ function ScoreGuideModal({ onClose }: { onClose: () => void }) {
             </tbody>
           </table>
         </div>
+
+        {/* PPP */}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#8b949e', marginBottom: 4 }}>PPP乖離率（-2〜+1）※FX変換付き銘柄のみ</div>
+          <div style={{ fontSize: 10, color: '#484f58', marginBottom: 6, lineHeight: 1.5 }}>
+            購買力平価（PPP）理論値との乖離。円安乖離 = 円換算で有利、円高乖離 = 不利。
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr><th style={th}>PPP乖離率</th><th style={th}>状態</th><th style={{ ...th, textAlign: 'center' }}>スコア</th></tr></thead>
+            <tbody>
+              {[
+                { v: '+40%超',    s: '🔺 極端な円安',   c: '0',  col: '#d29922', note: '高値圏・中立' },
+                { v: '+20〜+40%', s: '📈 円安圏',       c: '+1', col: '#3fb950' },
+                { v: '±20%以内',  s: '🟰 適正圏',       c: '0',  col: '#8b949e' },
+                { v: '-20〜0%',   s: '💴 円高方向',     c: '-1', col: '#f85149' },
+                { v: '-20%超',    s: '💴 極端な円高',   c: '-2', col: '#ff0000' },
+              ].map(r => (
+                <tr key={r.v}>
+                  <td style={td}>{r.v}</td>
+                  <td style={td}>{r.s}</td>
+                  <td style={{ ...tdC, color: r.col, fontWeight: 700 }}>{r.c}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )
@@ -247,6 +281,7 @@ function ScoreGuideModal({ onClose }: { onClose: () => void }) {
 interface SignalPanelProps {
   vixData:      VixData    | null
   macroData:    MacroData  | null
+  pppData:      PppData    | null
   score:        SignalScore | null
   onRefreshVix:   () => void
   onRefreshMacro: () => void
@@ -257,7 +292,7 @@ interface SignalPanelProps {
 }
 
 export default function SignalPanel({
-  vixData, macroData, score,
+  vixData, macroData, pppData, score,
   onRefreshVix, onRefreshMacro,
   vixLoading, macroLoading,
   vixError, macroError,
@@ -385,7 +420,7 @@ export default function SignalPanel({
             </div>
 
             {/* TSI行 */}
-            <div style={{ ...S.row, borderBottom: 'none' }}>
+            <div style={{ ...S.row }}>
               <span style={{ fontSize: 12, minWidth: 14 }}>📈</span>
               <span style={{ color: '#8b949e', minWidth: 28 }}>TSI</span>
               <span style={{ color: '#8b949e', flex: 1, fontSize: 10 }}>
@@ -406,6 +441,30 @@ export default function SignalPanel({
                 </>
               )}
             </div>
+
+            {/* PPP行（FX変換付き銘柄のみ表示） */}
+            {score && !score.pppNA && (
+              <div style={{ ...S.row, borderBottom: 'none' }}>
+                <span style={{ fontSize: 12, minWidth: 14 }}>
+                  {pppData ? PPP_DIR[pppData.direction].icon : '?'}
+                </span>
+                <span style={{ color: '#8b949e', minWidth: 28 }}>PPP</span>
+                <span style={{ flex: 1, fontSize: 10, color: pppData ? PPP_DIR[pppData.direction].color : '#484f58' }}>
+                  {pppData
+                    ? `${pppData.deviation > 0 ? '+' : ''}${pppData.deviation.toFixed(1)}%`
+                    : '—'}
+                </span>
+                <MiniBar value={score.ppp} max={2} />
+                <span style={{ fontSize: 10, color: score.ppp >= 0 ? '#3fb950' : '#f85149', minWidth: 18, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {score.ppp > 0 ? '+' : ''}{score.ppp}
+                </span>
+              </div>
+            )}
+
+            {/* PPPがN/Aの場合はTSI行をbottomなしに */}
+            {(!score || score.pppNA) && (
+              <div style={{ height: 0 }} />
+            )}
 
             {/* エラー */}
             {(vixError || macroError) && (

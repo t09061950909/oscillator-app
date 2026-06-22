@@ -39,7 +39,7 @@ export default function TradingChart({
   const containerRef = useRef<HTMLDivElement>(null)
   const stateRef     = useRef<ChartState | null>(null)
   const {
-    vixData, macroData, lastScore,
+    vixData, macroData, pppData, lastScore,
     vixLoading, macroLoading,
     vixError, macroError,
     fetchVix, fetchMacro,
@@ -137,6 +137,7 @@ export default function TradingChart({
         <SignalPanel
           vixData={vixData}
           macroData={macroData}
+          pppData={pppData}
           score={lastScore}
           onRefreshVix={fetchVix}
           onRefreshMacro={fetchMacro}
