@@ -317,6 +317,7 @@ async function fillYahooGap(jqTo: string) {
   }
 
   console.log(`[Yahoo補完] 完了: 保存 ${saved}件, スキップ ${skipped}件`)
+}
 
 main().catch(err => {
   console.error('致命的エラー:', err)
