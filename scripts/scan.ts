@@ -22,13 +22,6 @@
  */
 
 // .env.local を自動読み込み（tsx 実行時はNext.jsの自動読み込みが効かないため）
-// Node.js 20 WebSocket ポリフィル（createClient より前に実行必須）
-import { WebSocket as WS } from 'ws'
-if (typeof globalThis.WebSocket === 'undefined') {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(globalThis as any).WebSocket = WS
-}
-
 import { createClient } from '@supabase/supabase-js'
 import {
   fetchJQuantsIssues,

@@ -41,7 +41,7 @@ jobs:
       - name: Fetch prices
         id: fetch
         run: |
-          npx tsx scripts/fetch-prices.ts
+          npx tsx --import ./scripts/polyfill-ws.ts scripts/fetch-prices.ts
           echo "done=true" >> "$GITHUB_OUTPUT"
         env:
           FETCH_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.fetch_mode || 'diff' }}
@@ -71,7 +71,7 @@ jobs:
       - run: npm ci
 
       - name: Run GC/DC Scan
-        run: npx tsx scripts/scan.ts
+        run: npx tsx --import ./scripts/polyfill-ws.ts scripts/scan.ts
         env:
           MARKET: JP
           MA_PAIR: ${{ matrix.ma_pair }}

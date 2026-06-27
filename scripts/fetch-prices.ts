@@ -19,14 +19,6 @@
  *   補完: FETCH_MODE=date FETCH_DATE=2025-09-08 npx tsx --env-file=.env.local scripts/fetch-prices.ts
  */
 
-// Node.js 20 WebSocket ポリフィル（createClient より前に実行必須）
-// Node.js 22+ はネイティブ対応のため不要だが、あっても無害
-import { WebSocket as WS } from 'ws'
-if (typeof globalThis.WebSocket === 'undefined') {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(globalThis as any).WebSocket = WS
-}
-
 import { createClient } from '@supabase/supabase-js'
 import {
   fetchJQuantsDailyByDate,
