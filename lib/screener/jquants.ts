@@ -63,7 +63,8 @@ async function sleep(ms: number): Promise<void> {
 
 async function jquantsFetch<T>(
   path:   string,
-  params: Record<string, string> = {}
+  params: Record<string, string> = {},
+  retries = 3   // 接続タイムアウト時のリトライ回数
 ): Promise<T> {
   const API_KEY = process.env.JQUANTS_API_KEY
   if (!API_KEY) throw new Error('JQUANTS_API_KEY が設定されていません')
@@ -71,23 +72,42 @@ async function jquantsFetch<T>(
   const url = new URL(`${JQUANTS_BASE_URL}/${path}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
 
-  const res = await fetch(url.toString(), {
-    headers: { 'x-api-key': API_KEY },
-    cache: 'no-store',
-  })
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url.toString(), {
+        headers: { 'x-api-key': API_KEY },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(30_000),  // 30秒タイムアウト
+      })
 
-  if (res.status === 429) {
-    console.warn('[jquants] 429 Too Many Requests, waiting 30s...')
-    await sleep(30_000)
-    return jquantsFetch<T>(path, params)
+      if (res.status === 429) {
+        console.warn('[jquants] 429 Too Many Requests, waiting 30s...')
+        await sleep(30_000)
+        continue  // リトライ
+      }
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`[jquants] HTTP ${res.status} ${path}: ${text}`)
+      }
+
+      return res.json() as Promise<T>
+
+    } catch (e) {
+      const isTimeout = (e instanceof Error) &&
+        (e.message.includes('Timeout') || e.message.includes('TIMEOUT') ||
+         ('code' in e && (e as NodeJS.ErrnoException).code === 'UND_ERR_CONNECT_TIMEOUT'))
+      if (isTimeout && attempt < retries) {
+        const wait = attempt * 15_000  // 15秒, 30秒と段階的に待機
+        console.warn(`[jquants] 接続タイムアウト (${attempt}/${retries}), ${wait/1000}秒後リトライ...`)
+        await sleep(wait)
+        continue
+      }
+      throw e
+    }
   }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`[jquants] HTTP ${res.status} ${path}: ${text}`)
-  }
-
-  return res.json() as Promise<T>
+  throw new Error(`[jquants] ${path} リトライ上限(${retries}回)に達しました`)
 }
 
 // ── 銘柄マスタ取得 ───────────────────────────────────────────

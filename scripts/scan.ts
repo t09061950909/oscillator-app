@@ -160,9 +160,22 @@ async function main() {
   const latestDate = jqTo             // 84日前（J-Quants取得終了日 = スキャン基準日）
   console.log(`取得範囲: ${fromDate} 〜 ${latestDate}（J-Quants Free: 2年分・84日遅延）`)
 
-  // Step 1: 銘柄マスタ取得
+  // Step 1: 銘柄マスタ取得（接続エラー時は最大3回リトライ）
   console.log('\n[Step 1] 銘柄マスタ取得...')
-  const issues = await fetchJQuantsIssues()
+  let issues: Awaited<ReturnType<typeof fetchJQuantsIssues>> = []
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      issues = await fetchJQuantsIssues()
+      break
+    } catch (e) {
+      if (attempt < 3) {
+        console.warn(`[Step 1] 取得失敗 (${attempt}/3), 30秒後リトライ...`, e)
+        await sleep(30_000)
+      } else {
+        throw e  // 3回失敗で致命的エラー
+      }
+    }
+  }
   const targets = issues.filter(i => TARGET_MARKETS.includes(i.Mkt))
   console.log(`対象銘柄: ${targets.length}件 / 全${issues.length}件`)
   // 銘柄マスタ取得後にレート制限を守るため待機
