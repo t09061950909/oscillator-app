@@ -258,15 +258,25 @@ async function fillYahooGap(jqTo: string) {
 
   console.log(`\n[Yahoo補完] ${gapFromStr} 〜 ${today} を Yahoo で補完中...`)
 
-  // Supabase から symbol 一覧を取得
-  // .select('symbol') は行数上限があるため、特定日付1日分から取得する
+  // J-Quants終端日以前の最新日付でキャッシュから銘柄リストを取得
+  // （J-Quants範囲内の日付なら全銘柄が揃っているため）
   const { to: jqTo2 } = getJQuantsFreeAvailableRange()
+  const { data: anchorDateRow } = await (supabase.from('screener_price_cache') as any)
+    .select('date')
+    .lte('date', jqTo2)
+    .order('date', { ascending: false })
+    .limit(1)
+  const anchorDate: string | null = (anchorDateRow as { date: string }[] | null)?.[0]?.date ?? null
+  if (!anchorDate) {
+    console.log('[Yahoo補完] キャッシュが空です。先に fetch-prices を full モードで実行してください')
+    return
+  }
   const { data: symbolRows } = await (supabase.from('screener_price_cache') as any)
     .select('symbol')
-    .eq('date', jqTo2)   // J-Quantsの最終日（全銘柄が揃っている日）
+    .eq('date', anchorDate)
     .limit(10000)
   const symbols: string[] = (symbolRows ?? []).map((r: { symbol: string }) => r.symbol)
-  console.log(`[Yahoo補完] 対象銘柄: ${symbols.length}件`)
+  console.log(`[Yahoo補完] 対象銘柄: ${symbols.length}件 (基準日: ${anchorDate})`)
 
   if (symbols.length === 0) return
 
