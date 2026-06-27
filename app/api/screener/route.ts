@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 
+type SortKey = 'detected_at' | 'total_score' | 'symbol' | 'hold_days' | 'rank'
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
@@ -9,8 +11,9 @@ export async function GET(req: NextRequest) {
     const signalType = searchParams.get('signal_type')
     const maPair     = searchParams.get('ma_pair')
     const minRank    = searchParams.get('min_rank')
-    // デフォルト365日（スキャンが古くても表示できるよう広めに）
     const days       = parseInt(searchParams.get('days') ?? '365', 10)
+    const sortKey    = (searchParams.get('sort')  ?? 'detected_at') as SortKey
+    const sortDir    = searchParams.get('dir') === 'asc'
 
     const db = createServiceClient()
 
@@ -22,8 +25,6 @@ export async function GET(req: NextRequest) {
       .from('gc_signals')
       .select('*')
       .gte('detected_at', sinceStr)
-      .order('detected_at', { ascending: false })
-      .order('total_score',  { ascending: false })
       .limit(500)
 
     if (market)     query = query.eq('market',      market)
@@ -43,10 +44,32 @@ export async function GET(req: NextRequest) {
       query = query.in('rank', ranks)
     }
 
-    const { data, error } = await query
-    console.log('[screener] since:', sinceStr, 'count:', data?.length ?? 0, 'error:', error?.message)
+    // ソート：rank はA<B<C<D順（文字列ソートと一致するので直接使用可）
+    query = query.order(sortKey, { ascending: sortDir })
+    // 2次ソート
+    if (sortKey !== 'detected_at') query = query.order('detected_at', { ascending: false })
+    if (sortKey !== 'total_score') query = query.order('total_score',  { ascending: false })
 
+    const { data: signals, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // symbols テーブルから ticker → { id, display_name } マップを構築
+    const symbolSet = [...new Set((signals ?? []).map(s => s.symbol))]
+    const { data: symbolRows } = await db
+      .from('symbols')
+      .select('id, ticker, display_name')
+      .in('ticker', symbolSet)
+
+    const symbolMap = Object.fromEntries(
+      (symbolRows ?? []).map(r => [r.ticker, { id: r.id, name: r.display_name }])
+    )
+
+    // gc_signals の name フィールドを補完し、symbol_id を付加
+    const enriched = (signals ?? []).map(s => ({
+      ...s,
+      name:      s.name || symbolMap[s.symbol]?.name || null,
+      symbol_id: symbolMap[s.symbol]?.id ?? null,
+    }))
 
     const { data: logData } = await db
       .from('screener_scan_logs')
@@ -56,10 +79,7 @@ export async function GET(req: NextRequest) {
       .limit(1)
       .maybeSingle()
 
-    return NextResponse.json({
-      signals:  data ?? [],
-      lastScan: logData ?? null,
-    })
+    return NextResponse.json({ signals: enriched, lastScan: logData ?? null })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[GET /api/screener]', msg)

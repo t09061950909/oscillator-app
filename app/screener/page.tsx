@@ -9,6 +9,7 @@ import { createBrowserSupabase } from '@/lib/supabase'
 
 // ── 型 ─────────────────────────────────────────────────────────
 interface GcSignal {
+  symbol_id:      string | null
   id:             string
   symbol:         string
   market:         'JP' | 'US'
@@ -47,6 +48,7 @@ type SignalType = 'ALL' | 'GC' | 'DC'
 type MaPair     = 'ALL' | '25,75' | '75,200'
 type MinRank    = 'ALL' | 'A' | 'B' | 'C' | 'D'
 type DaysOption = 30 | 90 | 180 | 365
+type SortKey    = 'detected_at' | 'total_score' | 'symbol' | 'hold_days' | 'rank'
 
 // ── ランク別スタイル ─────────────────────────────────────────────
 const RANK_STYLE: Record<string, { bg: string; color: string; label: string }> = {
@@ -227,7 +229,7 @@ function SignalRow({
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: '1fr 52px 56px 80px 64px 1fr',
+      gridTemplateColumns: '1.8fr 52px 64px 80px 80px 1fr',
       alignItems: 'center',
       gap: 8,
       padding: '10px 16px',
@@ -237,14 +239,17 @@ function SignalRow({
     onMouseEnter={e => (e.currentTarget.style.background = '#21262d')}
     onMouseLeave={e => (e.currentTarget.style.background = '')}
     >
-      {/* 銘柄 */}
-      <div>
-        <div style={{ fontWeight: 700, fontSize: 14, letterSpacing: '-0.2px' }}>{signal.symbol}</div>
-        {signal.name && (
-          <div style={{ fontSize: 11, color: '#8b949e', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {signal.name}
-          </div>
-        )}
+      {/* 銘柄 + 銘柄名 */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, letterSpacing: '-0.2px', fontFamily: 'monospace' }}>
+          {signal.symbol}
+        </div>
+        <div style={{
+          fontSize: 11, color: '#8b949e', marginTop: 1,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {signal.name ?? <span style={{ color: '#484f58' }}>—</span>}
+        </div>
       </div>
 
       {/* 市場 */}
@@ -292,8 +297,6 @@ function SignalRow({
           {formatDate(signal.detected_at)}
         </div>
       </div>
-
-      {/* アクション */}
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
         <button
           onClick={() => onDetail(signal)}
@@ -309,11 +312,13 @@ function SignalRow({
         </button>
         <button
           onClick={() => onChart(signal)}
-          title="チャートを確認"
+          title={signal.symbol_id ? 'チャートを確認' : '監視リストに未登録'}
           style={{
-            background: 'var(--accent-blue)', border: 'none',
+            background: signal.symbol_id ? 'var(--accent-blue)' : '#21262d',
+            border: signal.symbol_id ? 'none' : '1px solid #30363d',
             borderRadius: 6, padding: '4px 10px',
-            color: '#fff', cursor: 'pointer', fontSize: 12,
+            color: signal.symbol_id ? '#fff' : '#484f58',
+            cursor: 'pointer', fontSize: 12,
             display: 'flex', alignItems: 'center', gap: 4,
           }}
         >
@@ -369,6 +374,9 @@ export default function ScreenerPage() {
   const [maPair,     setMaPair]     = useState<MaPair>('ALL')
   const [minRank,    setMinRank]    = useState<MinRank>('ALL')
   const [days,       setDays]       = useState<number>(365)
+  // ソート状態
+  const [sortKey, setSortKey] = useState<SortKey>('detected_at')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   // 認証チェック
   useEffect(() => {
@@ -388,6 +396,8 @@ export default function ScreenerPage() {
       if (maPair     !== 'ALL') params.set('ma_pair',     maPair)
       if (minRank    !== 'ALL') params.set('min_rank',    minRank)
       params.set('days', String(days))
+      params.set('sort', sortKey)
+      params.set('dir',  sortDir)
 
       const res = await fetch(`/api/screener?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -399,14 +409,29 @@ export default function ScreenerPage() {
     } finally {
       setLoading(false)
     }
-  }, [market, signalType, maPair, minRank, days])
+  }, [market, signalType, maPair, minRank, days, sortKey, sortDir])
 
   useEffect(() => { loadSignals() }, [loadSignals])
 
   function handleChart(signal: GcSignal) {
-    // symbols テーブルにある銘柄ならチャートへ（ticker から id を引けないため symbol ベース）
-    // JP 銘柄は 4桁コード.T → base_ticker 変換が必要なので query param で渡す
-    router.push(`/?highlight=${encodeURIComponent(signal.symbol)}`)
+    if (signal.symbol_id) {
+      // symbols テーブルに登録済み → チャートページへ直接遷移
+      const ticker = signal.symbol
+      const name   = encodeURIComponent(signal.name ?? signal.symbol)
+      router.push(`/chart/${signal.symbol_id}?ticker=${encodeURIComponent(ticker)}&name=${name}`)
+    } else {
+      // 未登録銘柄 → ホームのシンボル追加へ誘導
+      alert(`「${signal.symbol}」は監視リストに未登録です。\nホーム画面から銘柄を追加してください。`)
+    }
+  }
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'symbol' ? 'asc' : 'desc')
+    }
   }
 
   // ランク集計
@@ -575,23 +600,52 @@ export default function ScreenerPage() {
         <div style={{ background: '#1c2128', border: '1px solid #30363d', borderRadius: 10, overflow: 'hidden' }}>
 
           {/* テーブルヘッダー */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 52px 56px 80px 64px 1fr',
-            gap: 8,
-            padding: '8px 16px',
-            background: '#161b22',
-            borderBottom: '1px solid #30363d',
-            fontSize: 11, fontWeight: 600, color: '#8b949e',
-            letterSpacing: '0.05em',
-          }}>
-            <div>銘柄</div>
-            <div>市場</div>
-            <div>シグナル</div>
-            <div style={{ textAlign: 'center' }}>スコア</div>
-            <div style={{ textAlign: 'center' }}>発生</div>
-            <div style={{ textAlign: 'right' }}>アクション</div>
-          </div>
+          {(() => {
+            const col = (key: SortKey | null, label: string, align?: string) => {
+              const isActive = key && sortKey === key
+              return (
+                <div
+                  onClick={key ? () => handleSort(key) : undefined}
+                  style={{
+                    textAlign: align as 'center' | 'right' | undefined,
+                    cursor: key ? 'pointer' : 'default',
+                    userSelect: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    justifyContent: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
+                    color: isActive ? '#e6edf3' : '#8b949e',
+                  }}
+                >
+                  {label}
+                  {key && (
+                    <span style={{ fontSize: 10, opacity: isActive ? 1 : 0.3 }}>
+                      {isActive ? (sortDir === 'desc' ? '▼' : '▲') : '⇅'}
+                    </span>
+                  )}
+                </div>
+              )
+            }
+            return (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1.8fr 52px 64px 80px 80px 1fr',
+                gap: 8,
+                padding: '8px 16px',
+                background: '#161b22',
+                borderBottom: '1px solid #30363d',
+                fontSize: 11, fontWeight: 600,
+                letterSpacing: '0.05em',
+              }}>
+                {col('symbol',      '銘柄')}
+                {col(null,          '市場')}
+                {col(null,          'シグナル')}
+                {col('total_score', 'スコア', 'center')}
+                {col('detected_at', '発生日', 'center')}
+                {col(null,          'アクション', 'right')}
+              </div>
+            )
+          })()}
 
           {/* ローディング */}
           {loading && (
