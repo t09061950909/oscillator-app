@@ -23,6 +23,7 @@
 
 // .env.local を自動読み込み（tsx 実行時はNext.jsの自動読み込みが効かないため）
 import { createClient } from '@supabase/supabase-js'
+import ws from 'ws'
 import {
   fetchJQuantsIssues,
   fetchJQuantsDailyByDate,
@@ -143,13 +144,11 @@ function toYahooTicker(code: string): string {
 
 async function main() {
   // dotenv 読み込み後に環境変数が確定するので、ここで supabase を初期化
-  // Node.js 20 は WebSocket ネイティブ未サポートのため Realtime を無効化
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const supabaseOpts: any = { realtime: { enabled: false } }
+  // Node.js 20: ネイティブWebSocket未対応のためwsパッケージをtransportに指定
   supabase = createClient(
     process.env.SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    supabaseOpts
+    { realtime: { transport: ws } }
   )
 
   const startTime = Date.now()
@@ -288,7 +287,7 @@ main().catch(async (err) => {
     const supabase = createClient(
       process.env.SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { realtime: { enabled: false } } as never
+      { realtime: { transport: ws } }
     )
     try {
       await supabase.from('screener_scan_logs').insert({
