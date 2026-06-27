@@ -260,12 +260,14 @@ async function fillYahooGap(jqTo: string) {
 
   console.log(`\n[Yahoo補完] ${gapFromStr} 〜 ${today} を Yahoo で補完中...`)
 
-  // Supabase から symbol 一覧を取得（screener_price_cache に存在する銘柄のみ）
+  // Supabase から symbol 一覧を取得
+  // .select('symbol') は行数上限があるため、特定日付1日分から取得する
+  const { to: jqTo2 } = getJQuantsFreeAvailableRange()
   const { data: symbolRows } = await (supabase.from('screener_price_cache') as any)
     .select('symbol')
-    .order('symbol')
-    .limit(100000)
-  const symbols: string[] = [...new Set<string>((symbolRows ?? []).map((r: { symbol: string }) => r.symbol))]
+    .eq('date', jqTo2)   // J-Quantsの最終日（全銘柄が揃っている日）
+    .limit(10000)
+  const symbols: string[] = (symbolRows ?? []).map((r: { symbol: string }) => r.symbol)
   console.log(`[Yahoo補完] 対象銘柄: ${symbols.length}件`)
 
   if (symbols.length === 0) return
