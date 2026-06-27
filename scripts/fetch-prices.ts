@@ -26,6 +26,7 @@ import {
   jQuantsBarToPriceBar,
   getJQuantsFreeAvailableRange,
 } from '../lib/screener/jquants'
+import { fetchYahooBarsRaw } from '../lib/yahoo'
 import type { PriceBar } from '../types'
 
 // ── 設定 ─────────────────────────────────────────────────────
@@ -238,7 +239,84 @@ async function main() {
   console.log(`保存件数: ${totalSaved}件`)
   console.log(`エラー日数: ${dayErrors}日`)
   if (DRY_RUN) console.log('※ DRY_RUNのためDBへの書き込みはスキップしました')
+
+  // ── Phase 2: Yahoo で J-Quants ギャップ（84日分）を補完 ──────
+  // jqTo 〜 今日 の期間を全銘柄 Yahoo から取得してキャッシュに追記
+  // これにより scan.ts のスキャン基準日を「今日」にできる
+  await fillYahooGap(jqTo)
 }
+
+/** Yahoo Finance で jqTo+1〜today を補完してキャッシュに保存 */
+async function fillYahooGap(jqTo: string) {
+  const today = new Date().toISOString().slice(0, 10)
+  const gapFrom = new Date(jqTo)
+  gapFrom.setDate(gapFrom.getDate() + 1)
+  const gapFromStr = gapFrom.toISOString().slice(0, 10)
+
+  if (gapFromStr > today) {
+    console.log('\n[Yahoo補完] ギャップなし（最新状態）')
+    return
+  }
+
+  console.log(`\n[Yahoo補完] ${gapFromStr} 〜 ${today} を Yahoo で補完中...`)
+
+  // Supabase から symbol 一覧を取得（screener_price_cache に存在する銘柄のみ）
+  const { data: symbolRows } = await (supabase.from('screener_price_cache') as any)
+    .select('symbol')
+    .order('symbol')
+    .limit(100000)
+  const symbols: string[] = [...new Set<string>((symbolRows ?? []).map((r: { symbol: string }) => r.symbol))]
+  console.log(`[Yahoo補完] 対象銘柄: ${symbols.length}件`)
+
+  if (symbols.length === 0) return
+
+  const p1 = Math.floor(gapFrom.getTime() / 1000)
+  const p2 = Math.floor(Date.now() / 1000)
+
+  let saved = 0
+  let skipped = 0
+  const CONCURRENCY = 5  // 並列数（Yahoo はレート制限なし）
+  const BATCH_DB = 500
+
+  for (let i = 0; i < symbols.length; i += CONCURRENCY) {
+    const chunk = symbols.slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(chunk.map(async (symbol) => {
+      try {
+        const bars = await fetchYahooBarsRaw(symbol, p1, p2)
+        if (bars.length === 0) return []
+        return bars.map(b => ({
+          symbol,
+          name:   '',     // Yahoo から名前は取れないがキャッシュ済み銘柄なのでOK
+          date:   b.date,
+          open:   b.open,
+          high:   b.high,
+          low:    b.low,
+          close:  b.close,
+          volume: b.volume,
+        }))
+      } catch {
+        return []  // HTTP 400（上場廃止など）はスキップ
+      }
+    }))
+
+    const rows = results.flatMap(r => r.status === 'fulfilled' ? r.value : [])
+    if (rows.length === 0) { skipped += chunk.length; continue }
+
+    if (!DRY_RUN) {
+      for (let bi = 0; bi < rows.length; bi += BATCH_DB) {
+        const { error } = await (supabase.from('screener_price_cache') as any)
+          .upsert(rows.slice(bi, bi + BATCH_DB), { onConflict: 'symbol,date' })
+        if (error) console.error('[Yahoo補完] upsertエラー:', error.message)
+      }
+    }
+    saved += rows.length
+
+    if ((i / CONCURRENCY) % 20 === 0) {
+      console.log(`[Yahoo補完] 進捗: ${Math.min(i + CONCURRENCY, symbols.length)}/${symbols.length} (保存: ${saved}件)`)
+    }
+  }
+
+  console.log(`[Yahoo補完] 完了: 保存 ${saved}件, スキップ ${skipped}件`)
 
 main().catch(err => {
   console.error('致命的エラー:', err)

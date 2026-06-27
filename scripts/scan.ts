@@ -157,8 +157,15 @@ async function main() {
 
   const { from: jqFrom, to: jqTo } = getJQuantsFreeAvailableRange()
   const fromDate   = jqFrom           // 2年前（J-Quants取得開始日）
-  const latestDate = jqTo             // 84日前（J-Quants取得終了日 = スキャン基準日）
-  console.log(`取得範囲: ${fromDate} 〜 ${latestDate}（J-Quants Free: 2年分・84日遅延）`)
+
+  // スキャン基準日: キャッシュの最新日付（Yahoo補完後は今日付近になる）
+  // fallback: J-Quantsの終端日（84日遅延）
+  const { data: latestRow } = await (supabase.from('screener_price_cache') as any)
+    .select('date')
+    .order('date', { ascending: false })
+    .limit(1)
+  const latestDate: string = (latestRow as { date: string }[] | null)?.[0]?.date ?? jqTo
+  console.log(`取得範囲: ${fromDate} 〜 ${latestDate}（キャッシュ最新日）`)
 
   // Step 1: 銘柄マスタ取得（接続エラー時は最大3回リトライ）
   console.log('\n[Step 1] 銘柄マスタ取得...')

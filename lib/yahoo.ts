@@ -17,7 +17,7 @@ export function parseTicker(ticker: string): { base: string; fx: string | null }
  * UNIX秒の絶対日付指定を使う。
  * query1 → query2 の順にフォールバック
  */
-async function fetchYahooBarsRaw(
+export async function fetchYahooBarsRaw(
   ticker: string,
   period1: number,  // UNIX秒（開始）
   period2: number,  // UNIX秒（終了）

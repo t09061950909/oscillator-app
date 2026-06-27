@@ -26,7 +26,7 @@ jobs:
   fetch-prices:
     name: Fetch daily prices
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # full モード時は最大67分かかる
+    timeout-minutes: 150   # full モード時は最大67分かかる
     outputs:
       fetch_done: ${{ steps.fetch.outputs.done }}
 
