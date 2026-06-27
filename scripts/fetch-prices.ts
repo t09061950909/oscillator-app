@@ -136,11 +136,8 @@ async function main() {
     console.log(`\n差分取得: ${fetchFrom} 〜 ${fetchTo} (前回最終: ${lastDate ?? 'なし'})`)
   }
 
-  if (fetchFrom > fetchTo) {
-    console.log('取得すべき新しいデータなし（最新状態）')
-    return
-  }
-
+  // J-Quantsフェーズ: fetchFrom <= fetchTo の場合のみ実行
+  if (fetchFrom <= fetchTo) {
   // ── 銘柄コード→Yahoo変換マップを構築 ─────────────────────
 
   console.log('\n[Step 1] 銘柄マスタ取得...')
@@ -239,6 +236,7 @@ async function main() {
   console.log(`保存件数: ${totalSaved}件`)
   console.log(`エラー日数: ${dayErrors}日`)
   if (DRY_RUN) console.log('※ DRY_RUNのためDBへの書き込みはスキップしました')
+  } // end if (fetchFrom <= fetchTo)
 
   // ── Phase 2: Yahoo で J-Quants ギャップ（84日分）を補完 ──────
   // jqTo 〜 今日 の期間を全銘柄 Yahoo から取得してキャッシュに追記
