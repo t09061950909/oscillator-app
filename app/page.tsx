@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, RefreshCw, TrendingUp, Bell, BellOff, LogOut } from 'lucide-react'
+import { Plus, RefreshCw, TrendingUp, Bell, BellOff, LogOut, ScanSearch } from 'lucide-react'
 import type { Symbol } from '@/types'
 import SymbolCard from '@/components/SymbolCard'
 import AddSymbolModal from '@/components/AddSymbolModal'
@@ -97,6 +97,19 @@ export default function Home() {
               {userEmail}
             </span>
           )}
+          <button
+            onClick={() => router.push('/screener')}
+            style={{
+              background: 'rgba(63,185,80,0.1)',
+              border: '1px solid rgba(63,185,80,0.3)',
+              borderRadius: 6, padding: '6px 12px',
+              color: '#3fb950', cursor: 'pointer',
+              display: 'flex', alignItems: 'center',
+              gap: 6, fontSize: 13, fontWeight: 600,
+            }}
+          >
+            <ScanSearch size={14} /> スクリーナー
+          </button>
           <button
             onClick={notifEnabled ? undefined : requestNotification}
             title={notifEnabled ? '通知ON' : '通知を許可する'}
