@@ -20,7 +20,6 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
-import ws from 'ws'
 import {
   fetchJQuantsDailyByDate,
   fetchJQuantsIssues,
@@ -95,9 +94,7 @@ async function saveDayPrices(date: string, bars: PriceBar[], codeToName: Map<str
 async function main() {
   supabase = createClient(
     process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    { realtime: { transport: ws as any } }  // Node.js 20: ws型がWebSocketLikeConstructorと微妙に不一致のためanyキャスト
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
   const { from: jqFrom, to: jqTo } = getJQuantsFreeAvailableRange()
