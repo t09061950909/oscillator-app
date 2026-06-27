@@ -9,14 +9,14 @@ export async function GET(req: NextRequest) {
     const signalType = searchParams.get('signal_type')
     const maPair     = searchParams.get('ma_pair')
     const minRank    = searchParams.get('min_rank')
-    const days       = parseInt(searchParams.get('days') ?? '30', 10)
+    // デフォルト365日（スキャンが古くても表示できるよう広めに）
+    const days       = parseInt(searchParams.get('days') ?? '365', 10)
 
     const db = createServiceClient()
 
-    // 直近N日の日付下限
     const since = new Date()
     since.setDate(since.getDate() - days)
-    const sinceStr = since.toISOString().slice(0, 10) // YYYY-MM-DD
+    const sinceStr = since.toISOString().slice(0, 10)
 
     let query = db
       .from('gc_signals')
@@ -44,13 +44,10 @@ export async function GET(req: NextRequest) {
     }
 
     const { data, error } = await query
-
-    // デバッグログ（Vercel Functions のログで確認可能）
-    console.log('[screener] sinceStr:', sinceStr, 'count:', data?.length ?? 0, 'error:', error?.message)
+    console.log('[screener] since:', sinceStr, 'count:', data?.length ?? 0, 'error:', error?.message)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // 最終スキャン日時
     const { data: logData } = await db
       .from('screener_scan_logs')
       .select('scanned_at, total_tickers, signals_found, status')

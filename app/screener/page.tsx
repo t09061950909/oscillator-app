@@ -46,6 +46,7 @@ type Market     = 'ALL' | 'JP' | 'US'
 type SignalType = 'ALL' | 'GC' | 'DC'
 type MaPair     = 'ALL' | '25,75' | '75,200'
 type MinRank    = 'ALL' | 'A' | 'B' | 'C' | 'D'
+type DaysOption = 30 | 90 | 180 | 365
 
 // ── ランク別スタイル ─────────────────────────────────────────────
 const RANK_STYLE: Record<string, { bg: string; color: string; label: string }> = {
@@ -367,6 +368,7 @@ export default function ScreenerPage() {
   const [signalType, setSignalType] = useState<SignalType>('ALL')
   const [maPair,     setMaPair]     = useState<MaPair>('ALL')
   const [minRank,    setMinRank]    = useState<MinRank>('ALL')
+  const [days,       setDays]       = useState<number>(365)
 
   // 認証チェック
   useEffect(() => {
@@ -385,7 +387,7 @@ export default function ScreenerPage() {
       if (signalType !== 'ALL') params.set('signal_type', signalType)
       if (maPair     !== 'ALL') params.set('ma_pair',     maPair)
       if (minRank    !== 'ALL') params.set('min_rank',    minRank)
-      params.set('days', '30')
+      params.set('days', String(days))
 
       const res = await fetch(`/api/screener?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -397,7 +399,7 @@ export default function ScreenerPage() {
     } finally {
       setLoading(false)
     }
-  }, [market, signalType, maPair, minRank])
+  }, [market, signalType, maPair, minRank, days])
 
   useEffect(() => { loadSignals() }, [loadSignals])
 
@@ -547,6 +549,26 @@ export default function ScreenerPage() {
             value={minRank}
             onChange={setMinRank}
           />
+          <div style={{ width: 1, height: 24, background: '#30363d' }} />
+          {/* 期間フィルタ */}
+          <div style={{ display: 'flex', gap: 4 }}>
+            {([30, 90, 180, 365] as DaysOption[]).map(d => (
+              <button
+                key={d}
+                onClick={() => setDays(d)}
+                style={{
+                  background: days === d ? '#21262d' : 'none',
+                  border: `1px solid ${days === d ? '#8b949e' : '#30363d'}`,
+                  borderRadius: 6, padding: '5px 10px',
+                  color: days === d ? '#e6edf3' : '#8b949e',
+                  cursor: 'pointer', fontSize: 13,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {d === 30 ? '1ヶ月' : d === 90 ? '3ヶ月' : d === 180 ? '6ヶ月' : '1年'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* テーブル */}
