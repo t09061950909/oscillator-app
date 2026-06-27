@@ -145,10 +145,11 @@ function toYahooTicker(code: string): string {
 async function main() {
   // dotenv 読み込み後に環境変数が確定するので、ここで supabase を初期化
   // Node.js 20: ネイティブWebSocket未対応のためwsパッケージをtransportに指定
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase = createClient(
     process.env.SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { realtime: { transport: ws } }
+    { realtime: { transport: ws as any } }
   )
 
   const startTime = Date.now()
@@ -287,7 +288,7 @@ main().catch(async (err) => {
     const supabase = createClient(
       process.env.SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { realtime: { transport: ws } }
+      { realtime: { transport: ws as any } }
     )
     try {
       await supabase.from('screener_scan_logs').insert({

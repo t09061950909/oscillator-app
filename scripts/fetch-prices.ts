@@ -96,7 +96,8 @@ async function main() {
   supabase = createClient(
     process.env.SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { realtime: { transport: ws } }  // Node.js 20: ネイティブWebSocket未対応のためwsを使用
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    { realtime: { transport: ws as any } }  // Node.js 20: ws型がWebSocketLikeConstructorと微妙に不一致のためanyキャスト
   )
 
   const { from: jqFrom, to: jqTo } = getJQuantsFreeAvailableRange()

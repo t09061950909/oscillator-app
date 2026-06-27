@@ -32,8 +32,8 @@
   ],
   "exclude": [
     "node_modules",
+    "scripts",
     "jq_date_test.ts",
-    "jq_debug.ts",
-    "scripts/scan-test.ts"
+    "jq_debug.ts"
   ]
 }
