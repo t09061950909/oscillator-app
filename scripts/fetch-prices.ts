@@ -247,7 +247,16 @@ async function main() {
 /** Yahoo Finance で jqTo+1〜today を補完してキャッシュに保存 */
 async function fillYahooGap(jqTo: string) {
   const today = new Date().toISOString().slice(0, 10)
-  const gapFrom = new Date(jqTo)
+
+  // 開始日: キャッシュ全体の最新日付の翌日（Yahoo補完済みデータも含む）
+  // 初回はjqTo+1、以降は前回Yahoo補完日の翌日になる
+  const { data: latestRow } = await (supabase.from('screener_price_cache') as any)
+    .select('date')
+    .order('date', { ascending: false })
+    .limit(1)
+  const latestCached: string | null = (latestRow as { date: string }[] | null)?.[0]?.date ?? null
+  const baseDate = latestCached ?? jqTo
+  const gapFrom = new Date(baseDate)
   gapFrom.setDate(gapFrom.getDate() + 1)
   const gapFromStr = gapFrom.toISOString().slice(0, 10)
 
