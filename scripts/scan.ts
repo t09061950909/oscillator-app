@@ -218,7 +218,7 @@ async function main() {
   if (!DRY_RUN && signals.length > 0) {
     console.log('\n[Step 3] Supabase 書き込み...')
 
-    const rows = signals.map(s => ({
+    const allRows = signals.map(s => ({
       symbol:        s!.symbol,
       market:        s!.market,
       detected_at:   latestDate,
@@ -242,6 +242,18 @@ async function main() {
       ma_short_value: s!.maShortValue,
       ma_long_value:  s!.maLongValue,
     }))
+
+    // バッチ内重複を除去（同一symbolが複数パスで処理された場合の ON CONFLICT エラー対策）
+    const seen = new Set<string>()
+    const rows = allRows.filter(r => {
+      const key = `${r.symbol}|${r.detected_at}|${r.ma_short}|${r.ma_long}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    if (rows.length < allRows.length) {
+      console.log(`  重複除去: ${allRows.length} → ${rows.length}件`)
+    }
 
     // 500件ずつバッチ upsert
     const BATCH = 500
