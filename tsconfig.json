@@ -30,5 +30,10 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "jq_date_test.ts",
+    "jq_debug.ts",
+    "scripts/scan-test.ts"
+  ]
 }
