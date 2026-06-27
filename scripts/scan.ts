@@ -89,18 +89,21 @@ async function fetchBarsForScan(
   code: string,          // J-Quants証券コード ("7203")
   yahooTicker: string,   // Yahoo Financeティッカー ("7203.T")
   fromDate: string,
+  skipJQuants = false,   // キャッシュ不足時は重複呼び出しをスキップ
 ): Promise<PriceBar[]> {
 
   const { to: jqTo } = getJQuantsFreeAvailableRange()
 
-  // ① J-Quants から過去データ取得（12週間より前まで）
+  // ① J-Quants から過去データ取得（skipJQuants=true の場合はスキップ）
   let jqBars: PriceBar[] = []
-  try {
-    const raw = await fetchJQuantsDailyByCode(code, fromDate, jqTo)
-    jqBars = raw.map(jQuantsBarToPriceBar).filter((b): b is PriceBar => b !== null)
-    console.log(`[jquants] ${code}: ${jqBars.length}本 (${fromDate}〜${jqTo})`)
-  } catch (e) {
-    console.warn(`[jquants] ${code} 取得失敗:`, e)
+  if (!skipJQuants) {
+    try {
+      const raw = await fetchJQuantsDailyByCode(code, fromDate, jqTo)
+      jqBars = raw.map(jQuantsBarToPriceBar).filter((b): b is PriceBar => b !== null)
+      console.log(`[jquants] ${code}: ${jqBars.length}本 (${fromDate}〜${jqTo})`)
+    } catch (e) {
+      console.warn(`[jquants] ${code} 取得失敗:`, e)
+    }
   }
 
   // ② Yahoo Finance でデータ取得
@@ -181,10 +184,10 @@ async function main() {
       let bars = await getBarsFromCache(yahooTicker, fromDate)
 
       if (bars.length < maLong + 5) {
-        // キャッシュ不足 → Yahoo Finance でフォールバック（初回 or キャッシュ未蓄積時）
-        // 新規上場銘柄は物理的に本数が少ないため、Yahoo でも同様に少ない場合がある
+        // キャッシュ不足 → Yahoo Finance でフォールバック
+        // J-Quantsは getBarsFromCache 内で既に取得済み（または未蓄積）のため再呼び出しをスキップ
         console.warn(`[scan] ${yahooTicker} キャッシュ不足(${bars.length}本) → Yahooフォールバック`)
-        bars = await fetchBarsForScan(code, yahooTicker, fromDate)
+        bars = await fetchBarsForScan(code, yahooTicker, fromDate, true)  // skipJQuants=true
       }
 
       // 新規上場銘柄: maLong の 80% 以上あればスコア計算を試みる

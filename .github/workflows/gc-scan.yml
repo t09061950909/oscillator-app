@@ -55,7 +55,7 @@ jobs:
     name: GC/DC Scan (MA ${{ matrix.ma_pair }})
     needs: fetch-prices   # fetch-prices 完了後に開始（jobレベルの依存）
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     strategy:
       fail-fast: false
