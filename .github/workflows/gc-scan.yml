@@ -1,0 +1,85 @@
+# .github/workflows/gc-scan.yml
+name: GC/DC Daily Scan (JP)
+
+on:
+  schedule:
+    # JST 06:30（UTC 21:30）に実行
+    # fetch-prices: 差分なら通常 13〜40秒で完了
+    - cron: '30 21 * * 0-4'  # 日〜木 UTC21:30 = JST月〜金 06:30
+
+  workflow_dispatch:
+    inputs:
+      fetch_mode:
+        description: '価格取得モード (full=全期間初回 / diff=差分のみ)'
+        required: false
+        default: 'diff'
+        type: choice
+        options: ['diff', 'full']
+      dry_run:
+        description: 'DRY RUN（DBへの書き込みなし）'
+        required: false
+        default: 'false'
+        type: boolean
+
+# ── Job 1: 価格データ取得（1回のみ実行）─────────────────────────
+jobs:
+  fetch-prices:
+    name: Fetch daily prices
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # full モード時は最大67分かかる
+    outputs:
+      fetch_done: ${{ steps.fetch.outputs.done }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Fetch prices
+        id: fetch
+        run: |
+          npx tsx scripts/fetch-prices.ts
+          echo "done=true" >> "$GITHUB_OUTPUT"
+        env:
+          FETCH_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.fetch_mode || 'diff' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+
+# ── Job 2: GC/DC スキャン（25/75 と 75/200 を並列実行）──────────
+  scan:
+    name: GC/DC Scan (MA ${{ matrix.ma_pair }})
+    needs: fetch-prices   # fetch-prices 完了後に開始（jobレベルの依存）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ma_pair: ['25,75', '75,200']
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Run GC/DC Scan
+        run: npx tsx scripts/scan.ts
+        env:
+          MARKET: JP
+          MA_PAIR: ${{ matrix.ma_pair }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "::error::GC/DC Scan failed for MA pair ${{ matrix.ma_pair }}"

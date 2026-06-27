@@ -89,42 +89,50 @@ async function fetchYahooBarsRaw(
 /**
  * 分割取得でマージする（period1/period2 絶対日付指定）
  *
- * Yahoo Finance の range パラメータはサーバー側キャッシュに依存し、
- * 古い期間が欠落するケースがある。絶対 UNIX 秒で期間を指定することで
- * 確実に全期間を取得する。
+ * 「新しいチャンクから順に取得」し、十分なデータが集まったら
+ * 古いチャンクの取得を打ち切るアダプティブ方式。
  *
- * チャンク分割の理由：1リクエストあたりの上限が非公式で不明なため、
- * 5年ずつに分割して安全に取得する。
+ * 理由:
+ * - 新規上場銘柄は古い期間が存在しないため HTTP 400 が大量発生する
+ * - 直近データが取れれば古い期間は不要なことが多い
+ * - 最低 minBars 本 (デフォルト 210 = 75MA+余裕) 集まれば早期終了
  *
  * ・各チャンクが失敗しても続行（警告のみ）
- * ・重複日は後のチャンク（新しい期間）で上書き → 直近ほど精度が高い
+ * ・重複日は後から処理した側で上書き（直近優先）
  */
 export async function fetchYahooBars(
   ticker: string,
-  interval = '1d'
+  interval = '1d',
+  minBars  = 210    // この本数集まれば古いチャンクをスキップ
 ): Promise<PriceBar[]> {
   const map = new Map<string, PriceBar>()
   const now = Math.floor(Date.now() / 1000)
 
-  // 5年ずつ4チャンクで最大20年分を取得
-  // 例: 2004〜2009, 2009〜2014, 2014〜2019, 2019〜now
+  // 5年ずつ最大20年分を「新しい順」に生成
   const YEARS_PER_CHUNK = 5
   const TOTAL_YEARS     = 20
   const SEC_PER_YEAR    = 365.25 * 24 * 3600
 
   const chunks: Array<{ p1: number; p2: number }> = []
-  for (let i = TOTAL_YEARS; i > 0; i -= YEARS_PER_CHUNK) {
-    const p1 = Math.floor(now - i * SEC_PER_YEAR)
+  for (let i = YEARS_PER_CHUNK; i <= TOTAL_YEARS; i += YEARS_PER_CHUNK) {
     const p2 = Math.floor(now - (i - YEARS_PER_CHUNK) * SEC_PER_YEAR)
+    const p1 = Math.floor(now - i * SEC_PER_YEAR)
     chunks.push({ p1, p2: Math.min(p2, now) })
   }
+  // chunks = [直近5年, 5〜10年前, 10〜15年前, 15〜20年前] の順
 
   for (const { p1, p2 } of chunks) {
+    // 十分なデータが集まっていれば古いチャンクはスキップ
+    if (map.size >= minBars) break
+
     try {
       const bars = await fetchYahooBarsRaw(ticker, p1, p2, interval)
       for (const b of bars) map.set(b.date, b)
-    } catch (e) {
-      console.warn(`[yahoo] chunk failed for ${ticker} (${new Date(p1*1000).toISOString().slice(0,10)} → ${new Date(p2*1000).toISOString().slice(0,10)}):`, e)
+    } catch {
+      // 上場前期間の HTTP 400 は正常な挙動のため debug レベルで記録のみ
+      const from = new Date(p1 * 1000).toISOString().slice(0, 10)
+      const to   = new Date(p2 * 1000).toISOString().slice(0, 10)
+      console.debug(`[yahoo] ${ticker}: ${from}〜${to} のデータなし（上場前の可能性）`)
     }
   }
 

@@ -6,7 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "scan:test": "npx tsx --env-file=.env.local scripts/scan-test.ts",
+    "scan:dry": "cross-env DRY_RUN=true MA_PAIR=25,75 MARKET=JP npx tsx --env-file=.env.local scripts/scan.ts",
+    "scan:run": "cross-env DRY_RUN=false MA_PAIR=25,75 MARKET=JP npx tsx --env-file=.env.local scripts/scan.ts",
+    "fetch:full": "cross-env FETCH_MODE=full npx tsx --env-file=.env.local scripts/fetch-prices.ts",
+    "fetch:diff": "cross-env FETCH_MODE=diff npx tsx --env-file=.env.local scripts/fetch-prices.ts",
+    "fetch:dry": "cross-env FETCH_MODE=full DRY_RUN=true npx tsx --env-file=.env.local scripts/fetch-prices.ts",
+    "fetch:date": "npx tsx --env-file=.env.local scripts/fetch-prices.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
@@ -23,9 +32,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/ui": "^3.2.4",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }
