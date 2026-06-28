@@ -49,7 +49,7 @@ type SignalType = 'ALL' | 'GC' | 'DC'
 type MaPair     = 'ALL' | '25,75' | '75,200'
 type MinRank    = 'ALL' | 'A' | 'B' | 'C' | 'D'
 type DaysOption = 30 | 90 | 180 | 365
-type SortKey    = 'detected_at' | 'total_score' | 'symbol' | 'hold_days' | 'rank'
+type SortKey    = 'hold_days' | 'total_score' | 'symbol' | 'rank'
 
 // ── ランク別スタイル ─────────────────────────────────────────────
 const RANK_STYLE: Record<string, { bg: string; color: string; label: string }> = {
@@ -376,9 +376,9 @@ export default function ScreenerPage() {
   const [maPair,     setMaPair]     = useState<MaPair>('ALL')
   const [minRank,    setMinRank]    = useState<MinRank>('ALL')
   const [days,       setDays]       = useState<number>(365)
-  // ソート状態
-  const [sortKey, setSortKey] = useState<SortKey>('detected_at')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  // ソート状態（デフォルト: GC発生が新しい順 = hold_days 昇順）
+  const [sortKey, setSortKey] = useState<SortKey>('hold_days')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   // 認証チェック
   useEffect(() => {
@@ -414,16 +414,15 @@ export default function ScreenerPage() {
 
   useEffect(() => { loadSignals() }, [loadSignals])
 
-  // クライアントサイドソート（detected_at を文字列比較で確実に動作させる）
+  // クライアントサイドソート
   const sortedSignals = [...signals].sort((a, b) => {
     let cmp = 0
     if (sortKey === 'symbol') {
       cmp = a.symbol.localeCompare(b.symbol)
     } else if (sortKey === 'total_score') {
       cmp = a.total_score - b.total_score
-    } else if (sortKey === 'detected_at') {
-      cmp = a.detected_at.localeCompare(b.detected_at)
     } else if (sortKey === 'hold_days') {
+      // hold_days が小さい = GC/DC発生が最近
       cmp = a.hold_days - b.hold_days
     } else if (sortKey === 'rank') {
       const order = { A: 0, B: 1, C: 2, D: 3 }
@@ -447,7 +446,8 @@ export default function ScreenerPage() {
       setSortDir(d => d === 'desc' ? 'asc' : 'desc')
     } else {
       setSortKey(key)
-      setSortDir(key === 'symbol' ? 'asc' : 'desc')
+      // hold_days は昇順（0=今日が先頭）、それ以外は降順がデフォルト
+      setSortDir(key === 'symbol' || key === 'hold_days' ? 'asc' : 'desc')
     }
   }
 
@@ -658,7 +658,7 @@ export default function ScreenerPage() {
                 {col(null,          '市場')}
                 {col(null,          'シグナル')}
                 {col('total_score', 'スコア', 'center')}
-                {col('detected_at', '発生日', 'center')}
+                {col('hold_days',   '発生日', 'center')}
                 {col(null,          'アクション', 'right')}
               </div>
             )

@@ -21,9 +21,8 @@ export async function GET(req: NextRequest) {
       .from('gc_signals')
       .select('*')
       .gte('detected_at', sinceStr)
-      // デフォルトは detected_at DESC, total_score DESC（フロントでソート）
-      .order('detected_at', { ascending: false })
-      .order('total_score',  { ascending: false })
+      .order('hold_days',   { ascending: true })   // GC発生が新しい順（hold_days小＝最近）
+      .order('total_score', { ascending: false })
       .limit(500)
 
     if (market)     query = query.eq('market',      market)
@@ -34,37 +33,54 @@ export async function GET(req: NextRequest) {
     }
     if (minRank) {
       const rankOrder: Record<string, string[]> = {
-        A: ['A'],
-        B: ['A', 'B'],
-        C: ['A', 'B', 'C'],
-        D: ['A', 'B', 'C', 'D'],
+        A: ['A'], B: ['A','B'], C: ['A','B','C'], D: ['A','B','C','D'],
       }
-      query = query.in('rank', rankOrder[minRank] ?? ['A', 'B', 'C', 'D'])
+      query = query.in('rank', rankOrder[minRank] ?? ['A','B','C','D'])
     }
 
     const { data: signals, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // symbols テーブルから ticker → { id, display_name } マップ
-    // ※ gc_signals.symbol は "7203.T" 形式、symbols.ticker も同形式
+    // ── 銘柄名を screener_price_cache から取得 ──────────────────
+    // 各 symbol の最古レコードに name が入っている
     const symbolSet = [...new Set((signals ?? []).map(s => s.symbol))]
+
+    let nameMap: Record<string, string> = {}
+    if (symbolSet.length > 0) {
+      // symbol ごとに1件だけ取得（name が入っているレコード）
+      const { data: cacheRows } = await (db as any)
+        .from('screener_price_cache')
+        .select('symbol, name')
+        .in('symbol', symbolSet)
+        .not('name', 'is', null)
+        .not('name', 'eq', '')
+        .order('date', { ascending: true })   // 最古レコードから取得
+        .limit(symbolSet.length * 2)           // 1銘柄1件想定だが余裕を持たせる
+
+      // symbol → name（最初に見つかったものを使用）
+      for (const row of (cacheRows ?? []) as { symbol: string; name: string }[]) {
+        if (!nameMap[row.symbol]) nameMap[row.symbol] = row.name
+      }
+    }
+
+    // symbols テーブルでも補完（監視リスト登録済み銘柄の id も取得）
     const { data: symbolRows } = symbolSet.length > 0
       ? await db.from('symbols').select('id, ticker, display_name').in('ticker', symbolSet)
       : { data: [] }
 
-    const symbolMap = Object.fromEntries(
+    const symbolIdMap = Object.fromEntries(
       (symbolRows ?? []).map(r => [r.ticker, { id: r.id, name: r.display_name }])
     )
 
     const enriched = (signals ?? []).map(s => ({
       ...s,
-      // gc_signals.name が空なら symbols.display_name で補完
-      name:        s.name || symbolMap[s.symbol]?.name || null,
-      // symbols に登録済みなら UUID、未登録なら null
-      symbol_id:   symbolMap[s.symbol]?.id ?? null,
-      // Yahoo Finance チャートURL（symbol_id がなくても使えるフォールバック）
-      yahoo_url:   s.market === 'JP'
-        ? `https://finance.yahoo.co.jp/quote/${s.symbol.replace('.T', '')}.T`
+      name: s.name                          // gc_signals.name（scan後は入る）
+         || nameMap[s.symbol]               // screener_price_cache.name
+         || symbolIdMap[s.symbol]?.name     // symbols.display_name（監視登録済み）
+         || null,
+      symbol_id: symbolIdMap[s.symbol]?.id ?? null,
+      yahoo_url: s.market === 'JP'
+        ? `https://finance.yahoo.co.jp/quote/${s.symbol}`
         : `https://finance.yahoo.com/quote/${s.symbol}`,
     }))
 
