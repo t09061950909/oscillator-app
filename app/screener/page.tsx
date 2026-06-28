@@ -10,6 +10,7 @@ import { createBrowserSupabase } from '@/lib/supabase'
 // ── 型 ─────────────────────────────────────────────────────────
 interface GcSignal {
   symbol_id:      string | null
+  yahoo_url:      string | null   // チャートフォールバック用
   id:             string
   symbol:         string
   market:         'JP' | 'US'
@@ -312,17 +313,18 @@ function SignalRow({
         </button>
         <button
           onClick={() => onChart(signal)}
-          title={signal.symbol_id ? 'チャートを確認' : '監視リストに未登録'}
+          title={signal.symbol_id ? 'アプリ内チャートを表示' : 'Yahoo Financeでチャートを表示（別タブ）'}
           style={{
-            background: signal.symbol_id ? 'var(--accent-blue)' : '#21262d',
-            border: signal.symbol_id ? 'none' : '1px solid #30363d',
+            background: signal.symbol_id ? 'var(--accent-blue)' : 'rgba(210,153,34,0.15)',
+            border: signal.symbol_id ? 'none' : '1px solid #d29922',
             borderRadius: 6, padding: '4px 10px',
-            color: signal.symbol_id ? '#fff' : '#484f58',
+            color: signal.symbol_id ? '#fff' : '#d29922',
             cursor: 'pointer', fontSize: 12,
             display: 'flex', alignItems: 'center', gap: 4,
           }}
         >
-          <BarChart2 size={12} /> チャート
+          <BarChart2 size={12} />
+          {signal.symbol_id ? 'チャート' : 'Yahoo'}
           <ChevronRight size={11} />
         </button>
       </div>
@@ -396,8 +398,7 @@ export default function ScreenerPage() {
       if (maPair     !== 'ALL') params.set('ma_pair',     maPair)
       if (minRank    !== 'ALL') params.set('min_rank',    minRank)
       params.set('days', String(days))
-      params.set('sort', sortKey)
-      params.set('dir',  sortDir)
+      // ソートはクライアント側で行う（サーバーソートはdetected_at型で不安定なため）
 
       const res = await fetch(`/api/screener?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -409,19 +410,35 @@ export default function ScreenerPage() {
     } finally {
       setLoading(false)
     }
-  }, [market, signalType, maPair, minRank, days, sortKey, sortDir])
+  }, [market, signalType, maPair, minRank, days])
 
   useEffect(() => { loadSignals() }, [loadSignals])
 
+  // クライアントサイドソート（detected_at を文字列比較で確実に動作させる）
+  const sortedSignals = [...signals].sort((a, b) => {
+    let cmp = 0
+    if (sortKey === 'symbol') {
+      cmp = a.symbol.localeCompare(b.symbol)
+    } else if (sortKey === 'total_score') {
+      cmp = a.total_score - b.total_score
+    } else if (sortKey === 'detected_at') {
+      cmp = a.detected_at.localeCompare(b.detected_at)
+    } else if (sortKey === 'hold_days') {
+      cmp = a.hold_days - b.hold_days
+    } else if (sortKey === 'rank') {
+      const order = { A: 0, B: 1, C: 2, D: 3 }
+      cmp = (order[a.rank] ?? 9) - (order[b.rank] ?? 9)
+    }
+    return sortDir === 'desc' ? -cmp : cmp
+  })
+
   function handleChart(signal: GcSignal) {
     if (signal.symbol_id) {
-      // symbols テーブルに登録済み → チャートページへ直接遷移
-      const ticker = signal.symbol
-      const name   = encodeURIComponent(signal.name ?? signal.symbol)
-      router.push(`/chart/${signal.symbol_id}?ticker=${encodeURIComponent(ticker)}&name=${name}`)
-    } else {
-      // 未登録銘柄 → ホームのシンボル追加へ誘導
-      alert(`「${signal.symbol}」は監視リストに未登録です。\nホーム画面から銘柄を追加してください。`)
+      // 監視リスト登録済み → アプリ内チャートへ遷移
+      router.push(`/chart/${signal.symbol_id}`)
+    } else if (signal.yahoo_url) {
+      // 未登録 → Yahoo Financeチャートを別タブで開く
+      window.open(signal.yahoo_url, '_blank', 'noopener,noreferrer')
     }
   }
 
@@ -434,7 +451,7 @@ export default function ScreenerPage() {
     }
   }
 
-  // ランク集計
+  // ランク集計（ソート前の全件から）
   const rankCounts = signals.reduce<Record<string, number>>((acc, s) => {
     acc[s.rank] = (acc[s.rank] ?? 0) + 1
     return acc
@@ -680,7 +697,7 @@ export default function ScreenerPage() {
           )}
 
           {/* シグナル行 */}
-          {!loading && !error && signals.map(signal => (
+          {!loading && !error && sortedSignals.map(signal => (
             <SignalRow
               key={signal.id}
               signal={signal}
@@ -693,8 +710,8 @@ export default function ScreenerPage() {
         {/* フッター補足 */}
         {!loading && signals.length > 0 && lastScan && (
           <div style={{ marginTop: 12, fontSize: 12, color: '#484f58', textAlign: 'center' }}>
-            直近30日間のシグナルを表示 ・
-            スキャン対象: {lastScan.total_tickers?.toLocaleString() ?? '—'} 銘柄 ・
+            直近{days === 365 ? '1年' : days === 180 ? '6ヶ月' : days === 90 ? '3ヶ月' : '1ヶ月'}のシグナルを表示 ·
+            スキャン対象: {lastScan.total_tickers?.toLocaleString() ?? '—'} 銘柄 ·
             検出数: {lastScan.signals_found?.toLocaleString() ?? '—'} シグナル
           </div>
         )}

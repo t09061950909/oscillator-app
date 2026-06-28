@@ -185,6 +185,10 @@ async function main() {
   }
   const targets = issues.filter(i => TARGET_MARKETS.includes(i.Mkt))
   console.log(`対象銘柄: ${targets.length}件 / 全${issues.length}件`)
+  // yahooTicker → CoName のマップを構築（銘柄名をgc_signalsに保存するため）
+  const nameMap = new Map<string, string>(
+    targets.map(i => [toYahooTicker(i.Code), i.CoName])
+  )
   // 銘柄マスタ取得後にレート制限を守るため待機
   await sleep(13_000)
 
@@ -241,6 +245,7 @@ async function main() {
     const allRows = signals.map(s => ({
       symbol:        s!.symbol,
       market:        s!.market,
+      name:          nameMap.get(s!.symbol) ?? null,   // ← J-Quants銘柄名
       detected_at:   latestDate,
       signal_type:   s!.signalType,
       ma_short:      maShort,
