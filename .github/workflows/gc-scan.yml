@@ -5,7 +5,7 @@ on:
   schedule:
     # JST 06:30（UTC 21:30）に実行
     # fetch-prices: 差分なら通常 13〜40秒で完了
-    - cron: '30 21 * * 0-4'  # 日〜木 UTC21:30 = JST月〜金 06:30
+   # - cron: '30 21 * * 0-4'  # 日〜木 UTC21:30 = JST月〜金 06:30
 
   workflow_dispatch:
     inputs:
