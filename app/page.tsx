@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, RefreshCw, TrendingUp, Bell, BellOff, LogOut, ScanSearch } from 'lucide-react'
+import { Plus, RefreshCw, TrendingUp, Bell, BellOff, LogOut, ScanSearch, Gauge } from 'lucide-react'
 import type { Symbol } from '@/types'
 import SymbolCard from '@/components/SymbolCard'
 import AddSymbolModal from '@/components/AddSymbolModal'
@@ -109,6 +109,19 @@ export default function Home() {
             }}
           >
             <ScanSearch size={14} /> スクリーナー
+          </button>
+          <button
+            onClick={() => router.push('/scores')}
+            style={{
+              background: 'rgba(245,158,11,0.1)',
+              border: '1px solid rgba(245,158,11,0.3)',
+              borderRadius: 6, padding: '6px 12px',
+              color: '#f59e0b', cursor: 'pointer',
+              display: 'flex', alignItems: 'center',
+              gap: 6, fontSize: 13, fontWeight: 600,
+            }}
+          >
+            <Gauge size={14} /> 因子スコア
           </button>
           <button
             onClick={notifEnabled ? undefined : requestNotification}
