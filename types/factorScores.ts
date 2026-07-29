@@ -16,6 +16,12 @@ export interface FactorScoreRow {
   recovery_score: number | null;
   rank_bear: number | null;
   rank_recovery: number | null;
+  // rs_ratio_20単体による検証済みシグナル(oscillator-research Step③④で、
+  // DSR・エピソード単位ブートストラップ・holdout・検出ラグ・コストの
+  // すべてを通過)。既存のbear_score(5因子合成、BEAR_WEIGHTS)とは
+  // 検証履歴・対象因子が異なるため区別している。
+  bear_score_v2: number | null;
+  rank_bear_v2: number | null;
 }
 
 export interface MarketRegimeRow {

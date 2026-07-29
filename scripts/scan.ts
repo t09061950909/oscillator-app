@@ -32,7 +32,7 @@ import {
   calcFromDate,
   getJQuantsFreeAvailableRange,
 } from '../lib/screener/jquants'
-import { calcGCScore }  from '../lib/screener/calcScore'
+import { calcGCScore, computeRawExtras }  from '../lib/screener/calcScore'
 import { fetchYahooBars } from '../lib/yahoo'
 import type { PriceBar } from '../types'
 
@@ -195,6 +195,7 @@ async function main() {
   // Step 2: 全銘柄スキャン
   console.log('\n[Step 2] スキャン開始...')
   const signals: NonNullable<ReturnType<typeof calcGCScore>>[] = []
+  const rawExtrasMap = new Map<string, ReturnType<typeof computeRawExtras>>()
   let processed = 0
   let skipped   = 0
   let errors    = 0
@@ -222,7 +223,10 @@ async function main() {
       }
 
       const result = calcGCScore(yahooTicker, MARKET, bars, maShort, maLong)
-      if (result) signals.push(result)
+      if (result) {
+        signals.push(result)
+        rawExtrasMap.set(result.symbol, computeRawExtras(bars, maShort))
+      }
 
       processed++
       if (processed % 50 === 0) {
@@ -238,35 +242,78 @@ async function main() {
   console.log(`\nスキャン完了: 処理=${processed}, スキップ=${skipped}, エラー=${errors}`)
   console.log(`シグナル検出: ${signals.length}件`)
 
+  // Step 2.5: factor_scores(oscillator-research本番パイプライン)との突き合わせ
+  // symbolのみで突き合わせる(marketはfactor_scores側が小文字'jp'/'us'、
+  // gc_signals側が大文字'JP'/'US'で食い違うため使わない)。
+  console.log('\n[Step 2.5] factor_scores との突き合わせ(regime・bear_score_v2)...')
+  type FactorScoreLite = { symbol: string; regime: string | null; bear_score_v2: number | null; rank_bear_v2: number | null }
+  const scanSymbols = [...new Set(signals.map(s => s!.symbol))]
+  let factorMap = new Map<string, FactorScoreLite>()
+  if (scanSymbols.length > 0) {
+    const { data: latestFactorDateRow } = await (supabase.from('factor_scores') as any)
+      .select('date')
+      .order('date', { ascending: false })
+      .limit(1)
+    const latestFactorDate = (latestFactorDateRow as { date: string }[] | null)?.[0]?.date
+
+    if (latestFactorDate) {
+      const { data: factorRows, error: factorError } = await (supabase.from('factor_scores') as any)
+        .select('symbol, regime, bear_score_v2, rank_bear_v2')
+        .eq('date', latestFactorDate)
+        .in('symbol', scanSymbols)
+
+      if (factorError) {
+        console.warn('[factor_scores] 取得エラー(regime/bear_score_v2は空のまま続行):', factorError.message)
+      } else {
+        factorMap = new Map((factorRows ?? []).map((r: FactorScoreLite) => [r.symbol, r]))
+        console.log(`  ${factorMap.size}/${scanSymbols.length}銘柄で突き合わせ成功(factor_scores基準日: ${latestFactorDate})`)
+      }
+    } else {
+      console.warn('[factor_scores] データが見つかりません。regime/bear_score_v2は空のまま続行します。')
+    }
+  }
+
   // Step 3: Supabase に upsert
   if (!DRY_RUN && signals.length > 0) {
     console.log('\n[Step 3] Supabase 書き込み...')
 
-    const allRows = signals.map(s => ({
-      symbol:        s!.symbol,
-      market:        s!.market,
-      name:          nameMap.get(s!.symbol) ?? null,   // ← J-Quants銘柄名
-      detected_at:   latestDate,
-      signal_type:   s!.signalType,
-      ma_short:      maShort,
-      ma_long:       maLong,
-      hold_days:     s!.holdDays,
-      total_score:   s!.totalScore,
-      rank:          s!.rank,
-      score_slope:   s!.breakdown.slope,
-      score_volume:  s!.breakdown.volume,
-      score_rsi:     s!.breakdown.rsi,
-      score_hold:    s!.breakdown.hold,
-      score_deviation: s!.breakdown.deviation,
-      score_macd:    s!.breakdown.macd,
-      score_weekly:  s!.breakdown.weekly,
-      close_price:   s!.closePrice,
-      volume_ratio:  s!.volumeRatio,
-      rsi_value:     s!.rsiValue,
-      deviation_pct: s!.deviationPct,
-      ma_short_value: s!.maShortValue,
-      ma_long_value:  s!.maLongValue,
-    }))
+    const allRows = signals.map(s => {
+      const extras = rawExtrasMap.get(s!.symbol)
+      const factor = factorMap.get(s!.symbol)
+      return {
+        symbol:        s!.symbol,
+        market:        s!.market,
+        name:          nameMap.get(s!.symbol) ?? null,   // ← J-Quants銘柄名
+        detected_at:   latestDate,
+        signal_type:   s!.signalType,
+        ma_short:      maShort,
+        ma_long:       maLong,
+        hold_days:     s!.holdDays,
+        total_score:   s!.totalScore,
+        rank:          s!.rank,
+        score_slope:   s!.breakdown.slope,
+        score_volume:  s!.breakdown.volume,
+        score_rsi:     s!.breakdown.rsi,
+        score_hold:    s!.breakdown.hold,
+        score_deviation: s!.breakdown.deviation,
+        score_macd:    s!.breakdown.macd,
+        score_weekly:  s!.breakdown.weekly,
+        close_price:   s!.closePrice,
+        volume_ratio:  s!.volumeRatio,
+        rsi_value:     s!.rsiValue,
+        deviation_pct: s!.deviationPct,
+        ma_short_value: s!.maShortValue,
+        ma_long_value:  s!.maLongValue,
+        // 生の付加値(合算前。ユーザー向け表示用)
+        slope_pct:      extras?.slopePct ?? null,
+        macd_histogram: extras?.macdHistogram ?? null,
+        weekly_state:   extras?.weeklyState ?? null,
+        // factor_scoresとの連携(bear限定rs_ratio_20。oscillator-research Step③④で検証済み)
+        regime:         factor?.regime ?? null,
+        bear_score_v2:  factor?.bear_score_v2 ?? null,
+        rank_bear_v2:   factor?.rank_bear_v2 ?? null,
+      }
+    })
 
     // バッチ内重複を除去（同一symbolが複数パスで処理された場合の ON CONFLICT エラー対策）
     const seen = new Set<string>()
@@ -312,6 +359,24 @@ async function main() {
   }
 
   console.log(`\n=== 完了 (${(durationMs / 1000).toFixed(1)}秒) ===\n`)
+
+  // Step 5: 通知(失敗してもスキャン自体は成功扱いとし、ログだけ残す)
+  const appUrl = process.env.APP_URL
+  const notifySecret = process.env.NOTIFY_SECRET
+  if (!DRY_RUN && appUrl && notifySecret) {
+    try {
+      const res = await fetch(`${appUrl}/api/notify`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${notifySecret}` },
+      })
+      const body = await res.json().catch(() => ({}))
+      console.log('[notify]', res.ok ? '通知送信完了' : '通知送信失敗', body)
+    } catch (e) {
+      console.warn('[notify] 呼び出し失敗(スキャン自体は成功のため継続):', e)
+    }
+  } else if (!DRY_RUN) {
+    console.log('[notify] APP_URL または NOTIFY_SECRET が未設定のためスキップします')
+  }
 }
 
 main().catch(async (err) => {

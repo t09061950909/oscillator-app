@@ -57,12 +57,20 @@ export async function getCurrentRegimes(): Promise<MarketRegimeRow[]> {
 
 interface ScoreRankingParams {
   market?: Market;
-  scoreType: "bear" | "recovery";
+  scoreType: "bear" | "bear_v2" | "recovery";
   limit?: number;
 }
 
+const SCORE_COLUMNS: Record<ScoreRankingParams["scoreType"], { score: string; rank: string }> = {
+  bear: { score: "bear_score", rank: "rank_bear" },
+  // bear_v2: rs_ratio_20単体(oscillator-research Step③④で検証済み)。
+  // 既存のbear_score(5因子合成、BEAR_WEIGHTS)とは別の検証履歴・因子構成のため区別している。
+  bear_v2: { score: "bear_score_v2", rank: "rank_bear_v2" },
+  recovery: { score: "recovery_score", rank: "rank_recovery" },
+};
+
 /**
- * 最新日時点の、bear_score または recovery_score の上位ランキングを取得する。
+ * 最新日時点の、bear_score / bear_score_v2 / recovery_score の上位ランキングを取得する。
  * 対象レジームでない銘柄はscoreがnullなので、自動的に除外される
  * (bull/rangeの間はこの関数の結果が空配列になるのが正常な挙動)。
  */
@@ -75,8 +83,7 @@ export async function getScoreRanking({
   if (!latestDate) return [];
 
   const supabase = getClient();
-  const scoreColumn = scoreType === "bear" ? "bear_score" : "recovery_score";
-  const rankColumn = scoreType === "bear" ? "rank_bear" : "rank_recovery";
+  const { score: scoreColumn, rank: rankColumn } = SCORE_COLUMNS[scoreType];
 
   let query = supabase
     .from("factor_scores")

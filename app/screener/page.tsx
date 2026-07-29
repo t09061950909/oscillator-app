@@ -35,6 +35,19 @@ interface GcSignal {
   deviation_pct:  number | null
   ma_short_value: number | null
   ma_long_value:  number | null
+  // 生の付加値(合算前)
+  slope_pct:      number | null
+  macd_histogram: number | null
+  weekly_state:   'above' | 'below' | 'flat' | null
+  // factor_scoresとの連携(bear限定rs_ratio_20。oscillator-research Step③④で検証済み)
+  regime:         string | null
+  bear_score_v2:  number | null
+  rank_bear_v2:   number | null
+}
+
+/** regime='bear'時、rs_ratio_20を根拠に検証済みラベルを付与する候補かどうか */
+function isValidatedSignal(signal: GcSignal): boolean {
+  return signal.regime === 'bear' && signal.bear_score_v2 != null
 }
 
 interface ScanLog {
@@ -81,17 +94,20 @@ function formatDateTime(iso: string): string {
   return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
 }
 
-// ── スコア内訳モーダル ──────────────────────────────────────────
+// ── 詳細モーダル(合算スコアではなく生の観測事実を表示) ────────────
 function BreakdownModal({ signal, onClose }: { signal: GcSignal; onClose: () => void }) {
-  const rank = RANK_STYLE[signal.rank]
-  const items = [
-    { label: 'MAの傾き',     score: signal.score_slope,     max: 20,  desc: '短期MA直近5日の変化率' },
-    { label: '出来高比率',   score: signal.score_volume,    max: 20,  desc: '当日 / 10日平均出来高' },
-    { label: 'RSI水準',      score: signal.score_rsi,       max: 15,  desc: 'RSI(14)が50〜70が理想' },
-    { label: 'GC維持日数',   score: signal.score_hold,      max: 25,  desc: 'クロス後の維持ボーナス' },
-    { label: '価格乖離率',   score: signal.score_deviation, max: 10,  desc: '長期MAからの乖離幅' },
-    { label: 'MACD方向',     score: signal.score_macd,      max: 15,  desc: 'MACDヒストグラム状態' },
-    { label: '週足トレンド', score: signal.score_weekly,    max: 15,  desc: '週足SMA5 vs SMA20' },
+  const validated = isValidatedSignal(signal)
+  const observations = [
+    { label: '短期MAの傾き(直近5日)', value: signal.slope_pct != null ? `${signal.slope_pct >= 0 ? '+' : ''}${signal.slope_pct.toFixed(2)}%` : '—' },
+    { label: '出来高比率(直近10日平均比)', value: signal.volume_ratio != null ? `${signal.volume_ratio.toFixed(2)}倍` : '—' },
+    { label: 'RSI(14)', value: signal.rsi_value != null ? signal.rsi_value.toFixed(1) : '—' },
+    { label: 'クロス後の維持日数', value: signal.hold_days === 0 ? '本日発生' : `${signal.hold_days}日` },
+    { label: '長期MAからの価格乖離率', value: signal.deviation_pct != null ? `${signal.deviation_pct >= 0 ? '+' : ''}${signal.deviation_pct.toFixed(2)}%` : '—' },
+    { label: 'MACDヒストグラム', value: signal.macd_histogram != null ? signal.macd_histogram.toFixed(3) : '—' },
+    {
+      label: '週足トレンド(SMA5 vs SMA20)',
+      value: signal.weekly_state === 'above' ? '上向き' : signal.weekly_state === 'below' ? '下向き' : signal.weekly_state === 'flat' ? '同水準' : '—',
+    },
   ]
   return (
     <div
@@ -110,29 +126,38 @@ function BreakdownModal({ signal, onClose }: { signal: GcSignal; onClose: () => 
         }}
       >
         {/* ヘッダー */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ fontSize: 20, fontWeight: 700 }}>{signal.symbol}</span>
-              <span style={{
-                background: signal.signal_type === 'GC' ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)',
-                color: signal.signal_type === 'GC' ? '#3fb950' : '#f85149',
-                padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 700,
-              }}>{signal.signal_type}</span>
-              <span style={{
-                background: rank.bg, color: rank.color,
-                padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 700,
-              }}>ランク{signal.rank}</span>
-            </div>
-            <div style={{ fontSize: 13, color: '#8b949e' }}>
-              MA{signal.ma_short}/{signal.ma_long} ・ 発生: {formatDate(signal.detected_at)} ({holdDaysLabel(signal.hold_days)})
-            </div>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 20, fontWeight: 700 }}>{signal.symbol}</span>
+            <span style={{
+              background: signal.signal_type === 'GC' ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)',
+              color: signal.signal_type === 'GC' ? '#3fb950' : '#f85149',
+              padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 700,
+            }}>{signal.signal_type}</span>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 28, fontWeight: 800, color: rank.color }}>{signal.total_score}</div>
-            <div style={{ fontSize: 11, color: '#8b949e' }}>/ 100点</div>
+          <div style={{ fontSize: 13, color: '#8b949e' }}>
+            MA{signal.ma_short}/{signal.ma_long} ・ 発生: {formatDate(signal.detected_at)} ({holdDaysLabel(signal.hold_days)})
           </div>
         </div>
+
+        {/* 検証済みラベル(bear限定rs_ratio_20に該当する場合のみ) */}
+        {validated && (
+          <div style={{
+            marginBottom: 20, padding: 12,
+            background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.4)', borderRadius: 8,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#3fb950', marginBottom: 4 }}>
+              ✓ 検証済み: bear相場での逆張り候補
+            </div>
+            <div style={{ fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
+              JP/US両市場でDSR・ホールドアウト・検出ラグ・コスト控除後リターンの検証を通過
+              (oscillator-research Step③④)。相対強度ランク: {signal.rank_bear_v2 ?? '—'}位
+            </div>
+            <div style={{ fontSize: 12, color: '#d29922', marginTop: 6 }}>
+              推奨サイズはエイスケリー(1/8)程度以下。銘柄間相関が高く、見た目の銘柄数ほど分散されていない点に注意。
+            </div>
+          </div>
+        )}
 
         {/* 参考値 */}
         <div style={{
@@ -141,9 +166,7 @@ function BreakdownModal({ signal, onClose }: { signal: GcSignal; onClose: () => 
         }}>
           {[
             { label: '終値', value: signal.close_price != null ? signal.close_price.toLocaleString() : '-' },
-            { label: 'RSI(14)', value: signal.rsi_value != null ? signal.rsi_value.toFixed(1) : '-' },
-            { label: '出来高比率', value: signal.volume_ratio != null ? signal.volume_ratio.toFixed(2) + 'x' : '-' },
-            { label: '長期MA乖離', value: signal.deviation_pct != null ? signal.deviation_pct.toFixed(1) + '%' : '-' },
+            { label: '現在のレジーム', value: signal.regime ?? '不明' },
           ].map(item => (
             <div key={item.label} style={{
               background: '#161b22', border: '1px solid #30363d',
@@ -155,52 +178,20 @@ function BreakdownModal({ signal, onClose }: { signal: GcSignal; onClose: () => 
           ))}
         </div>
 
-        {/* スコア内訳 */}
+        {/* 観測事実(生の値。合算スコアは出さない) */}
         <div style={{ marginBottom: 4, fontSize: 12, color: '#8b949e', fontWeight: 600, letterSpacing: '0.05em' }}>
-          スコア内訳
+          観測事実(参考情報。上記「検証済み」以外は検証済みの予測シグナルではありません)
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {items.map(item => {
-            const isPositive = item.score > 0
-            const isNegative = item.score < 0
-            const barColor = isPositive ? '#3fb950' : isNegative ? '#f85149' : '#30363d'
-            const barPct = Math.abs(item.score) / item.max * 100
-            return (
-              <div key={item.label}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>{item.label}</span>
-                    <span style={{ fontSize: 11, color: '#484f58', marginLeft: 6 }}>{item.desc}</span>
-                  </div>
-                  <span style={{
-                    fontSize: 13, fontWeight: 700,
-                    color: isPositive ? '#3fb950' : isNegative ? '#f85149' : '#8b949e',
-                  }}>
-                    {isPositive ? '+' : ''}{item.score}
-                  </span>
-                </div>
-                <div style={{ height: 4, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%', width: `${Math.min(100, barPct)}%`,
-                    background: barColor, borderRadius: 2,
-                    transition: 'width 0.3s ease',
-                  }} />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* 判断指針 */}
-        <div style={{
-          marginTop: 20, padding: 12,
-          background: rank.bg, border: `1px solid ${rank.color}33`,
-          borderRadius: 8, fontSize: 13, color: rank.color,
-        }}>
-          {signal.rank === 'A' && '✅ 高信頼シグナル。積極的に検討可。'}
-          {signal.rank === 'B' && '🔍 中信頼。週足チャートを確認してから判断を。'}
-          {signal.rank === 'C' && '⚠️ 低信頼。参考程度に留め、追加確認を推奨。'}
-          {signal.rank === 'D' && '🚫 騙しリスク高。様子見を推奨。'}
+          {observations.map(item => (
+            <div key={item.label} style={{
+              display: 'flex', justifyContent: 'space-between',
+              padding: '8px 0', borderBottom: '1px solid #21262d',
+            }}>
+              <span style={{ fontSize: 13, color: '#8b949e' }}>{item.label}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{item.value}</span>
+            </div>
+          ))}
         </div>
 
         <button
@@ -224,8 +215,8 @@ function SignalRow({
   onDetail: (s: GcSignal) => void
   onChart:  (s: GcSignal) => void
 }) {
-  const rank = RANK_STYLE[signal.rank]
   const isGC = signal.signal_type === 'GC'
+  const validated = isValidatedSignal(signal)
 
   return (
     <div style={{
@@ -277,16 +268,19 @@ function SignalRow({
         </div>
       </div>
 
-      {/* スコア */}
+      {/* 検証済みラベル(旧: ランク+スコア) */}
       <div style={{ textAlign: 'center' }}>
-        <span style={{
-          display: 'inline-block',
-          background: rank.bg, color: rank.color,
-          padding: '3px 10px', borderRadius: 6,
-          fontSize: 13, fontWeight: 800, letterSpacing: '-0.3px',
-        }}>
-          {signal.rank}{signal.total_score}
-        </span>
+        {validated ? (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+            background: 'rgba(63,185,80,0.15)', color: '#3fb950',
+            padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+          }}>
+            ✓ 検証済み
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: '#484f58' }}>—</span>
+        )}
       </div>
 
       {/* 発生日 */}
@@ -375,6 +369,7 @@ export default function ScreenerPage() {
   const [signalType, setSignalType] = useState<SignalType>('ALL')
   const [maPair,     setMaPair]     = useState<MaPair>('ALL')
   const [minRank,    setMinRank]    = useState<MinRank>('ALL')
+  const [validatedOnly, setValidatedOnly] = useState(false)
   const [days,       setDays]       = useState<number>(365)
   // ソート状態（デフォルト: GC発生が新しい順 = hold_days 昇順）
   const [sortKey, setSortKey] = useState<SortKey>('hold_days')
@@ -429,7 +424,7 @@ export default function ScreenerPage() {
       cmp = (order[a.rank] ?? 9) - (order[b.rank] ?? 9)
     }
     return sortDir === 'desc' ? -cmp : cmp
-  })
+  }).filter(s => !validatedOnly || isValidatedSignal(s))
 
   function handleChart(signal: GcSignal) {
     if (signal.symbol_id) {
@@ -451,11 +446,12 @@ export default function ScreenerPage() {
     }
   }
 
-  // ランク集計（ソート前の全件から）
+  // ランク集計(ソート前の全件から。参考情報として残す)
   const rankCounts = signals.reduce<Record<string, number>>((acc, s) => {
     acc[s.rank] = (acc[s.rank] ?? 0) + 1
     return acc
   }, {})
+  const validatedCount = signals.filter(isValidatedSignal).length
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-primary)' }}>
@@ -508,9 +504,27 @@ export default function ScreenerPage() {
       {/* メイン */}
       <main style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 16px' }}>
 
-        {/* ランクサマリー */}
+        {/* 検証済みサマリー + 旧ランクサマリー(参考) */}
         {!loading && signals.length > 0 && (
-          <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div
+              onClick={() => setValidatedOnly(v => !v)}
+              style={{
+                background: validatedOnly ? 'rgba(63,185,80,0.15)' : '#1c2128',
+                border: `1px solid ${validatedOnly ? '#3fb950' : '#30363d'}`,
+                borderRadius: 8, padding: '10px 16px', cursor: 'pointer',
+                minWidth: 90, textAlign: 'center', transition: 'all 0.15s',
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#3fb950' }}>
+                {validatedCount}
+              </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>
+                ✓ 検証済み
+              </div>
+            </div>
+            <div style={{ width: 1, height: 32, background: '#30363d', margin: '0 4px' }} />
+            <span style={{ fontSize: 11, color: '#484f58' }}>以下は参考情報(旧ランク基準。検証済みではありません)</span>
             {(['A', 'B', 'C', 'D'] as const).map(r => {
               const st = RANK_STYLE[r]
               const n  = rankCounts[r] ?? 0
@@ -521,15 +535,15 @@ export default function ScreenerPage() {
                   style={{
                     background: minRank === r ? st.bg : '#1c2128',
                     border: `1px solid ${minRank === r ? st.color : '#30363d'}`,
-                    borderRadius: 8, padding: '10px 16px', cursor: 'pointer',
-                    minWidth: 90, textAlign: 'center', transition: 'all 0.15s',
+                    borderRadius: 8, padding: '6px 12px', cursor: 'pointer',
+                    minWidth: 60, textAlign: 'center', transition: 'all 0.15s',
                   }}
                 >
-                  <div style={{ fontSize: 18, fontWeight: 800, color: st.color }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: st.color }}>
                     {n}
                   </div>
-                  <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>
-                    ランク{r}　{st.label}
+                  <div style={{ fontSize: 10, color: '#8b949e' }}>
+                    {r}
                   </div>
                 </div>
               )
@@ -657,7 +671,7 @@ export default function ScreenerPage() {
                 {col('symbol',      '銘柄')}
                 {col(null,          '市場')}
                 {col(null,          'シグナル')}
-                {col('total_score', 'スコア', 'center')}
+                {col('total_score', '検証済み', 'center')}
                 {col('hold_days',   '発生日', 'center')}
                 {col(null,          'アクション', 'right')}
               </div>
