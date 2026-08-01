@@ -369,8 +369,12 @@ async function main() {
         method: 'POST',
         headers: { Authorization: `Bearer ${notifySecret}` },
       })
-      const body = await res.json().catch(() => ({}))
-      console.log('[notify]', res.ok ? '通知送信完了' : '通知送信失敗', body)
+      const rawText = await res.text()
+      if (res.ok) {
+        console.log('[notify] 通知送信完了', rawText)
+      } else {
+        console.warn(`[notify] 通知送信失敗 status=${res.status} body=${rawText.slice(0, 500)}`)
+      }
     } catch (e) {
       console.warn('[notify] 呼び出し失敗(スキャン自体は成功のため継続):', e)
     }
