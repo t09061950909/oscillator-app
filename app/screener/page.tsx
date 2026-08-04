@@ -6,6 +6,7 @@ import {
   ArrowLeft, Info, BarChart2, Clock,
 } from 'lucide-react'
 import { createBrowserSupabase } from '@/lib/supabase'
+import { DecisionButtons } from '@/components/DecisionButtons'
 
 // ── 型 ─────────────────────────────────────────────────────────
 interface GcSignal {
@@ -193,6 +194,15 @@ function BreakdownModal({ signal, onClose }: { signal: GcSignal; onClose: () => 
             </div>
           ))}
         </div>
+
+        <DecisionButtons
+          symbol={signal.symbol}
+          market={signal.market}
+          detectedAt={signal.detected_at}
+          signalType={signal.signal_type}
+          wasValidated={validated}
+          priceAtDecision={signal.close_price}
+        />
 
         <button
           onClick={onClose}

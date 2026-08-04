@@ -7,17 +7,20 @@ import yahooFinance from 'yahoo-finance2'
  *
  * decided_atから約20営業日(28暦日を目安。土日・祝日を考慮した余裕を含む)
  * 経過し、まだ結果を記録していない判断について、現在の株価を取得して
- * リターンを計算・記録する。日次cron等で定期的に叩く想定
- * (vercel.jsonのcrons設定、または外部のスケジューラから呼び出す)。
+ * リターンを計算・記録する。
  *
- * 認証: NOTIFY_SECRETを流用(専用シークレットを分けたい場合は要変更)。
+ * 認証: Vercel Cronの標準的な仕組みに合わせ、CRON_SECRET環境変数を使う。
+ * Vercelは、この環境変数が設定されている場合、cron実行時に
+ * "Authorization: Bearer $CRON_SECRET" ヘッダーを自動的に付与する
+ * (2026年6月時点のVercel公式ドキュメントで確認)。手動での動作確認時は、
+ * 同じ値を自分でヘッダーに指定すればよい。
  */
 
 const LOOKBACK_DAYS_THRESHOLD = 28
 
-export async function POST(req: NextRequest) {
+export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.NOTIFY_SECRET}`) {
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
