@@ -11,12 +11,17 @@ import yahooFinance from 'yahoo-finance2'
  *
  * 認証: Vercel Cronの標準的な仕組みに合わせ、CRON_SECRET環境変数を使う。
  * Vercelは、この環境変数が設定されている場合、cron実行時に
- * "Authorization: Bearer $CRON_SECRET" ヘッダーを自動的に付与する
- * (2026年6月時点のVercel公式ドキュメントで確認)。手動での動作確認時は、
- * 同じ値を自分でヘッダーに指定すればよい。
+ * "Authorization: Bearer $CRON_SECRET" ヘッダーを自動的に付与する。
  */
 
 const LOOKBACK_DAYS_THRESHOLD = 28
+
+// yahoo-finance2のquote()はオプションの組み合わせによって戻り値の型推論が
+// 崩れ、'never'になることがある(TypeScriptのオーバーロード解決の既知の問題)。
+// 実行時に必要なフィールドが存在することは分かっているため、型アサーションで回避する。
+interface YahooQuoteLite {
+  regularMarketPrice?: number
+}
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
@@ -45,7 +50,11 @@ export async function GET(req: NextRequest) {
 
   for (const row of pending) {
     try {
-      const quote = await yahooFinance.quote(row.symbol, {}, { validateResult: false })
+      const quote = (await yahooFinance.quote(
+        row.symbol,
+        {},
+        { validateResult: false },
+      )) as unknown as YahooQuoteLite | null
       const currentPrice = quote?.regularMarketPrice
       if (currentPrice == null || !row.price_at_decision) {
         failures.push({ symbol: row.symbol, error: '価格取得不可' })
