@@ -3,7 +3,7 @@
 export const dynamic = 'force-dynamic';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createBrowserSupabase } from '@/lib/supabase';
 import Auth from '@/components/Auth';
 import { 
   Wallet, PieChart as ChartIcon, Settings, RefreshCcw, TrendingUp, Trash2, Search, 
@@ -142,6 +142,9 @@ type MarketType = '全て' | '日本株' | '米国株' | '投資信託';
 type TaxCategoryType = '特定口座' | 'NISA' | 'iDeCo';
 type RangeType = '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
 type CyclicalType = '景気敏感' | '中立' | 'ディフェンシブ';
+
+// ブラウザ用Supabaseクライアント（モジュールスコープで1度だけ生成し使い回す）
+const supabase = createBrowserSupabase();
 
 export default function PortfolioPage() {
   // ── 共通 state ──────────────────────────────────────────
